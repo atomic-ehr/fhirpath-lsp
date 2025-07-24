@@ -1,17 +1,11 @@
 Follow guides defined below:
 - [Performance] https://github.com/microsoft/Typescript/wiki/Performance
 - [Typescript] https://google.github.io/styleguide/tsguide.html
-- [VsCode extension ]https://code.visualstudio.com/api/extension-guides/overview
+- [VsCode extension] https://code.visualstudio.com/api/extension-guides/overview
 - [Fhirpath] https://hl7.org/fhirpath
-
 
 Before executing any task create https://github.com/joelparkerhenderson/architecture-decision-record in the ` adr ` folder.
 Use the ` tasks ` directory to manage your current task and save progress for easy have context of what is already done in a project
-
-For development use @atomic-ehr/fhirpath  in ../fhirpath directory instead of using library from npm registry.
-
-
-
 ---
 
 

@@ -1,0 +1,13 @@
+// @resource Observation  
+// @input vital-signs-data.json
+
+// Context: Observation resource
+status = "final"
+category.coding.where(code = "vital-signs")
+code.coding.code
+subject.reference
+valueQuantity.value > 120
+component.where(code.coding.code = "8480-6").valueQuantity.value
+
+// This should error - Patient properties on Observation
+name.family  // Error: Property 'name' not found in Observation

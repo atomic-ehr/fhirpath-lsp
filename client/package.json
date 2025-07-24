@@ -1,0 +1,176 @@
+{
+  "name": "fhirpath-lsp-client",
+  "version": "0.1.0",
+  "description": "FHIRPath Language Support",
+  "displayName": "FHIRPath Language Support",
+  "publisher": "atomic-ehr",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/atomic-ehr/fhirpath-lsp"
+  },
+  "engines": {
+    "vscode": "^1.84.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters",
+    "Formatters"
+  ],
+  "keywords": [
+    "fhir",
+    "fhirpath",
+    "healthcare",
+    "hl7"
+  ],
+  "activationEvents": [
+    "onLanguage:fhirpath"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "fhirpath",
+        "aliases": [
+          "FHIRPath",
+          "fhirpath"
+        ],
+        "extensions": [
+          ".fhirpath",
+          ".fhir"
+        ],
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "light": "./images/fhirpath-light.svg",
+          "dark": "./images/fhirpath-dark.svg"
+        }
+      }
+    ],
+    "grammars": [
+      {
+        "language": "fhirpath",
+        "scopeName": "source.fhirpath",
+        "path": "./syntaxes/fhirpath.tmGrammar.json"
+      }
+    ],
+    "configuration": {
+      "type": "object",
+      "title": "FHIRPath",
+      "properties": {
+        "fhirpath.validate.enable": {
+          "scope": "resource",
+          "type": "boolean",
+          "default": true,
+          "description": "Enable/disable FHIRPath validation"
+        },
+        "fhirpath.validate.delay": {
+          "scope": "resource",
+          "type": "number",
+          "default": 300,
+          "minimum": 100,
+          "maximum": 2000,
+          "description": "Delay in milliseconds before validation triggers"
+        },
+        "fhirpath.semantic.enable": {
+          "scope": "resource",
+          "type": "boolean",
+          "default": true,
+          "description": "Enable semantic highlighting"
+        },
+        "fhirpath.completion.snippets": {
+          "scope": "resource",
+          "type": "boolean",
+          "default": true,
+          "description": "Enable snippet suggestions in completion"
+        },
+        "fhirpath.fhirVersion": {
+          "scope": "resource",
+          "type": "string",
+          "enum": [
+            "R4",
+            "STU3",
+            "DSTU2"
+          ],
+          "default": "R4",
+          "description": "FHIR version for validation and completion"
+        },
+        "fhirpath.trace.server": {
+          "scope": "window",
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "description": "Traces the communication between VS Code and the language server"
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "fhirpath.validateExpression",
+        "title": "FHIRPath: Validate Expression"
+      },
+      {
+        "command": "fhirpath.clearCache",
+        "title": "FHIRPath: Clear Cache"
+      },
+      {
+        "command": "fhirpath.showCacheStats",
+        "title": "FHIRPath: Show Cache Statistics"
+      },
+      {
+        "command": "fhirpath.restartServer",
+        "title": "FHIRPath: Restart Language Server"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "when": "resourceLangId == fhirpath",
+          "command": "fhirpath.validateExpression",
+          "group": "fhirpath"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "fhirpath.validateExpression",
+          "when": "resourceLangId == fhirpath"
+        },
+        {
+          "command": "fhirpath.clearCache"
+        },
+        {
+          "command": "fhirpath.showCacheStats"
+        },
+        {
+          "command": "fhirpath.restartServer"
+        }
+      ]
+    },
+    "configurationDefaults": {
+      "[fhirpath]": {
+        "editor.semanticHighlighting.enabled": true,
+        "editor.wordBasedSuggestions": "off",
+        "editor.suggest.showWords": false
+      }
+    }
+  },
+  "scripts": {
+    "build": "bun run ../build.js",
+    "watch": "bun run ../build.js --watch",
+    "test": "bun test",
+    "typecheck": "bunx tsc --noEmit",
+    "vscode:prepublish": "bun run build",
+    "package": "vsce package"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.84.0",
+    "@vscode/test-electron": "^2.3.8",
+    "typescript": "^5.3.3",
+    "@vscode/vsce": "^2.22.0"
+  }
+}

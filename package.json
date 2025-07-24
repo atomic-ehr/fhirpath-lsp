@@ -1,0 +1,111 @@
+{
+  "name": "fhirpath-lsp",
+  "version": "0.1.0",
+  "description": "FHIRPath Language Support",
+  "displayName": "FHIRPath Language Support",
+  "publisher": "atomic-ehr",
+  "private": true,
+  "engines": {
+    "vscode": "^1.84.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters",
+    "Formatters"
+  ],
+  "activationEvents": [
+    "onLanguage:fhirpath"
+  ],
+  "main": "./client/out/extension.js",
+  "workspaces": [
+    "client",
+    "server",
+    "shared"
+  ],
+  "scripts": {
+    "build": "bun run build.js",
+    "build:client": "cd client && bun run build",
+    "build:server": "cd server && bun run build",
+    "build:shared": "cd shared && bun run build",
+    "watch": "bun run build.js --watch",
+    "test": "bun test",
+    "typecheck": "bunx tsc --build",
+    "typecheck:client": "cd client && bun run typecheck",
+    "typecheck:server": "cd server && bun run typecheck",
+    "typecheck:shared": "cd shared && bun run typecheck",
+    "clean": "rm -rf client/out server/out shared/out",
+    "install:all": "bun install && cd client && bun install && cd ../server && bun install && cd ../shared && bun install",
+    "dev": "bun run build && code --extensionDevelopmentPath=. --new-window",
+    "package": "cd client && bunx vsce package",
+    "lint": "bunx eslint . --ext .ts",
+    "format": "bunx prettier --write ."
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/node": "^20.11.0",
+    "typescript": "^5.3.3",
+    "esbuild": "^0.19.11",
+    "@typescript-eslint/eslint-plugin": "^6.19.0",
+    "@typescript-eslint/parser": "^6.19.0",
+    "eslint": "^8.56.0",
+    "prettier": "^3.2.4"
+  },
+  "dependencies": {
+    "@atomic-ehr/fhirpath": "latest"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/atomic-ehr/fhirpath-lsp"
+  },
+  "keywords": [
+    "fhir",
+    "fhirpath",
+    "healthcare",
+    "language-server",
+    "vscode"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "fhirpath",
+        "aliases": ["FHIRPath", "fhirpath"],
+        "extensions": [".fhirpath", ".fhir"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "fhirpath",
+        "scopeName": "source.fhirpath",
+        "path": "./syntaxes/fhirpath.tmGrammar.json"
+      }
+    ],
+    "configuration": {
+      "type": "object",
+      "title": "FHIRPath",
+      "properties": {
+        "fhirpath.validate.enable": {
+          "scope": "resource",
+          "type": "boolean",
+          "default": true,
+          "description": "Enable/disable FHIRPath validation"
+        },
+        "fhirpath.trace.server": {
+          "scope": "window",
+          "type": "string",
+          "enum": ["off", "messages", "verbose"],
+          "default": "off",
+          "description": "Traces the communication between VS Code and the language server"
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "fhirpath.validateExpression",
+        "title": "FHIRPath: Validate Expression"
+      }
+    ]
+  },
+  "author": "Atomic EHR Team",
+  "license": "MIT"
+}

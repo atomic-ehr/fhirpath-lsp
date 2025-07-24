@@ -1,0 +1,11 @@
+// Test file to verify that expressions starting with resource types don't trigger warnings
+// These expressions should NOT trigger "empty input" warnings:
+
+Patient.name
+Observation.value
+Condition.code
+
+// These expressions SHOULD trigger "empty input" warnings (standalone properties):
+name
+value
+status

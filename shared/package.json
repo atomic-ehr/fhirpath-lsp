@@ -1,0 +1,16 @@
+{
+  "name": "fhirpath-lsp-shared",
+  "version": "0.1.0",
+  "description": "Shared types and utilities for FHIRPath LSP",
+  "main": "out/index.js",
+  "types": "out/index.d.ts",
+  "type": "module",
+  "scripts": {
+    "build": "bunx tsc",
+    "watch": "bunx tsc --watch",
+    "typecheck": "bunx tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.3"
+  }
+}

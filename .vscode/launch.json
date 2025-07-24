@@ -13,7 +13,7 @@
         "${workspaceFolder}/client/out/**/*.js",
         "${workspaceFolder}/server/out/**/*.js"
       ],
-      "preLaunchTask": "npm: compile"
+      "preLaunchTask": "build"
     },
     {
       "name": "Attach to Server",
@@ -21,13 +21,18 @@
       "request": "attach",
       "port": 6009,
       "restart": true,
-      "outFiles": ["${workspaceFolder}/server/out/**/*.js"]
+      "outFiles": [
+        "${workspaceFolder}/server/out/**/*.js"
+      ]
     }
   ],
   "compounds": [
     {
       "name": "Client + Server",
-      "configurations": ["Launch Extension", "Attach to Server"]
+      "configurations": [
+        "Launch Extension",
+        "Attach to Server"
+      ]
     }
   ]
 }

@@ -1,0 +1,28 @@
+// @resource Observation
+// @inputfile patient-example.json
+
+// Multi-expression file with Patient context
+// Expressions should be validated against Patient resource
+
+// Valid Patient expressions
+name.family
+active = true
+birthDate < today()
+
+// Multiple expressions per line
+name.exists(); active = true; birthDate.exists()
+
+// These should show errors - properties don't exist on Patient
+status = "final"
+category.coding
+
+// String with semicolons should not be split
+name.where(family = "Doe; Smith").exists()
+
+// Function validation with context
+name.where(use = "official").first().family
+telecom.where(system = "phone").value
+address.where(use = "home").line.first()
+
+// This should error - wrong resource type in context
+Observation.value

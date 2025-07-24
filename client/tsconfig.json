@@ -1,0 +1,20 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "outDir": "./out",
+    "rootDir": "./src",
+    "composite": true,
+    "module": "commonjs",
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM"],
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "types": ["vscode", "node"]
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "out", "**/*.test.ts"],
+  "references": [
+    { "path": "../shared" }
+  ]
+}

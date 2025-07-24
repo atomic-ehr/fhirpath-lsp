@@ -1,0 +1,4 @@
+Patient.name.where(use = "official")
+Patient.invalidProperty
+Observation.value.as(Quantity)
+UnknownResource.property

@@ -1,0 +1,27 @@
+// Multi-expression file without context
+// Each line is validated independently
+
+// Valid expressions
+Patient.name.family
+Observation.status = "final"
+Condition.clinicalStatus
+
+// Multiple expressions on one line
+Patient.active; Observation.value; Condition.code
+
+// Invalid syntax examples
+Patient.name..family
+Observation.status = 
+unclosedFunction(
+Patient.name[
+
+// String expressions with semicolons (should not be split)
+Patient.name.where(family = "Smith; Johnson")
+Observation.note.text.contains("test; result")
+
+// Function validation
+Patient.name.validFunction()
+Patient.name.unknownFunction()
+
+// Complex expressions
+Patient.name.where(use = "official").family.exists() and Patient.active = true

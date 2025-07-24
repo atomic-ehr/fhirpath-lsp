@@ -1,0 +1,11 @@
+// @input patient-example.json
+// @resource Patient
+
+// These expressions will be validated against Patient context
+name.where(use = "official").family
+telecom.where(system = "phone").value
+birthDate
+active = true
+
+// This should show an error - wrong resource type
+Observation.status
