@@ -19,7 +19,7 @@ Create a professional-grade FHIRPath language support system that provides devel
 - **Parser**: atomic-ehr/fhirpath (TypeScript implementation with AST support)
 - **LSP Framework**: Microsoft vscode-languageserver-node
 - **Build System**: TypeScript with ESBuild
-- **Testing**: Jest + VS Code Extension Test Framework
+- **Testing**: Vitest + VS Code Extension Test Framework
 - **Runtime**: Bun (preferred) or Node.js
 
 ## Architecture Decision Record
@@ -190,19 +190,19 @@ export enum TokenType {
 
 export class FHIRPathService {
   private compiledCache = new Map<string, any>();
-  
+
   parse(expression: string): ParseResult {
     try {
       // Parse the expression to get AST
       const ast = fhirpath.parse(expression);
-      
+
       // Compile for caching
       const compiled = fhirpath.compile(ast);
       this.compiledCache.set(expression, compiled);
-      
+
       // Extract tokens from AST
       const tokens = this.extractTokensFromAST(ast, expression);
-      
+
       return {
         success: true,
         ast,
@@ -216,23 +216,23 @@ export class FHIRPathService {
       };
     }
   }
-  
+
   analyze(expression: string | fhirpath.FHIRPathExpression): any {
     // Use the analyze function for type analysis
     return fhirpath.analyze(expression);
   }
-  
+
   private extractTokensFromAST(ast: fhirpath.FHIRPathExpression, expression: string): Token[] {
     const tokens: Token[] = [];
-    
+
     // Walk the AST and extract tokens
     const walkAST = (node: any, parent?: any) => {
       if (!node) return;
-      
+
       // Determine token type based on node type
       let tokenType: TokenType | null = null;
       let value: string | null = null;
-      
+
       switch (node.type) {
         case 'Identifier':
           tokenType = TokenType.Identifier;
@@ -259,7 +259,7 @@ export class FHIRPathService {
           value = node.operator;
           break;
       }
-      
+
       if (tokenType && value && node.location) {
         tokens.push({
           type: tokenType,
@@ -270,7 +270,7 @@ export class FHIRPathService {
           column: node.location.start.column - 1
         });
       }
-      
+
       // Recursively walk child nodes
       if (node.children) {
         for (const child of node.children) {
@@ -278,11 +278,11 @@ export class FHIRPathService {
         }
       }
     };
-    
+
     walkAST(ast);
     return tokens.sort((a, b) => a.start - b.start);
   }
-  
+
   private parseErrorFromException(error: any, expression: string): ParseError {
     // Check if error has location information
     if (error.location) {
@@ -294,11 +294,11 @@ export class FHIRPathService {
         length: error.location.end.offset - error.location.start.offset
       };
     }
-    
+
     // Fallback to regex parsing
     const match = error.message?.match(/at position (\d+)/);
     const offset = match ? parseInt(match[1]) : 0;
-    
+
     return {
       message: error.message || 'Parse error',
       line: this.offsetToLine(expression, offset),
@@ -307,11 +307,11 @@ export class FHIRPathService {
       length: 1
     };
   }
-  
+
   private offsetToLine(text: string, offset: number): number {
     return text.substring(0, offset).split('\n').length - 1;
   }
-  
+
   private offsetToColumn(text: string, offset: number): number {
     const lines = text.substring(0, offset).split('\n');
     return lines[lines.length - 1].length;
@@ -402,16 +402,16 @@ export class DiagnosticProvider {
     new FunctionValidator(),
     new TypeValidator()
   ];
-  
+
   constructor(private fhirPathService: FHIRPathService) {}
-  
+
   async provideDiagnostics(document: TextDocument): Promise<Diagnostic[]> {
     const text = document.getText();
     const diagnostics: Diagnostic[] = [];
-    
+
     // First, check for syntax errors
     const parseResult = this.fhirPathService.parse(text);
-    
+
     if (!parseResult.success) {
       return parseResult.errors.map(error => ({
         severity: DiagnosticSeverity.Error,
@@ -424,13 +424,13 @@ export class DiagnosticProvider {
         code: error.code
       }));
     }
-    
+
     // Run semantic validators
     for (const validator of this.validators) {
       const issues = await validator.validate(parseResult.ast, document);
       diagnostics.push(...issues);
     }
-    
+
     return diagnostics;
   }
 }
@@ -534,7 +534,7 @@ export class CompletionProvider {
       documentation: 'Tests if the string ends with the suffix'
     }]
   ]);
-  
+
   provideCompletions(
     document: TextDocument,
     position: Position,
@@ -544,12 +544,12 @@ export class CompletionProvider {
       start: { line: position.line, character: 0 },
       end: position
     });
-    
+
     // Context-aware completion logic
     if (line.endsWith('.')) {
       return this.getPropertyCompletions(line);
     }
-    
+
     return Array.from(this.functionSignatures.values());
   }
 }
@@ -565,7 +565,7 @@ export class SemanticTokenProvider {
   private tokenTypeMap = new Map<TokenType, number>([
     [TokenType.Function, 0],     // 'function'
     [TokenType.Identifier, 1],   // 'parameter'
-    [TokenType.Identifier, 2],   // 'variable'  
+    [TokenType.Identifier, 2],   // 'variable'
     [TokenType.Identifier, 3],   // 'property'
     [TokenType.Operator, 4],     // 'operator'
     [TokenType.Keyword, 5],      // 'keyword'
@@ -573,11 +573,11 @@ export class SemanticTokenProvider {
     [TokenType.Number, 7],       // 'number'
     [TokenType.Boolean, 8]       // 'boolean'
   ]);
-  
+
   provideSemanticTokens(document: TextDocument): SemanticTokens {
     const builder = new SemanticTokensBuilder();
     const parseResult = this.fhirPathService.parse(document.getText());
-    
+
     if (parseResult.success && parseResult.tokens) {
       // Use AST-extracted tokens for accurate highlighting
       for (const token of parseResult.tokens) {
@@ -594,10 +594,10 @@ export class SemanticTokenProvider {
       // Fallback to regex-based tokenization if AST parsing fails
       this.fallbackTokenization(document.getText(), builder);
     }
-    
+
     return builder.build();
   }
-  
+
   private fallbackTokenization(text: string, builder: SemanticTokensBuilder): void {
     // Simple regex-based tokenization for partial syntax highlighting
     const patterns = [
@@ -606,14 +606,14 @@ export class SemanticTokenProvider {
       { regex: /'([^'\\]|\\.)*'/g, type: 6 }, // strings
       { regex: /\b\d+(\.\d+)?\b/g, type: 7 }, // numbers
     ];
-    
+
     for (const pattern of patterns) {
       let match;
       while ((match = pattern.regex.exec(text)) !== null) {
         const lines = text.substring(0, match.index).split('\n');
         const line = lines.length - 1;
         const character = lines[line].length;
-        
+
         builder.push(line, character, match[0].length, pattern.type, 0);
       }
     }
@@ -626,8 +626,8 @@ export class SemanticTokenProvider {
 ```typescript
 // client/src/extension.ts
 import * as path from 'path';
-import { 
-  workspace, 
+import {
+  workspace,
   ExtensionContext,
   window,
   commands
@@ -646,13 +646,13 @@ export function activate(context: ExtensionContext) {
   const serverModule = context.asAbsolutePath(
     path.join('server', 'out', 'server.js')
   );
-  
+
   const debugOptions = { execArgv: ['--nolazy', '--inspect=6009'] };
-  
+
   const serverOptions: ServerOptions = {
-    run: { 
-      module: serverModule, 
-      transport: TransportKind.ipc 
+    run: {
+      module: serverModule,
+      transport: TransportKind.ipc
     },
     debug: {
       module: serverModule,
@@ -660,7 +660,7 @@ export function activate(context: ExtensionContext) {
       options: debugOptions
     }
   };
-  
+
   const clientOptions: LanguageClientOptions = {
     documentSelector: [
       { scheme: 'file', language: 'fhirpath' },
@@ -677,14 +677,14 @@ export function activate(context: ExtensionContext) {
       }
     }
   };
-  
+
   client = new LanguageClient(
     'fhirpathLanguageServer',
     'FHIRPath Language Server',
     serverOptions,
     clientOptions
   );
-  
+
   // Register commands
   const validateCommand = commands.registerCommand('fhirpath.validateExpression', () => {
     const editor = window.activeTextEditor;
@@ -697,7 +697,7 @@ export function activate(context: ExtensionContext) {
       });
     }
   });
-  
+
   context.subscriptions.push(validateCommand);
   client.start();
 }
@@ -720,20 +720,20 @@ export class ErrorRecoveryParser {
   parse(text: string): ParseResult {
     const errors: ParseError[] = [];
     const recoveryPoints = this.findRecoveryPoints(text);
-    
+
     // Attempt parsing segments between recovery points
     const segments = this.splitByRecoveryPoints(text, recoveryPoints);
-    const partialASTs = segments.map(segment => 
+    const partialASTs = segments.map(segment =>
       this.parseSegment(segment, errors)
     );
-    
+
     return {
       ast: this.mergePartialASTs(partialASTs),
       errors,
       partial: true
     };
   }
-  
+
   private findRecoveryPoints(text: string): number[] {
     // Find natural break points in FHIRPath expressions
     const points: number[] = [0];
@@ -743,14 +743,14 @@ export class ErrorRecoveryParser {
       /\s*\|\s*/g,  // Union operator
       /\s*\.\s*/g   // Path separator
     ];
-    
+
     for (const pattern of patterns) {
       let match;
       while ((match = pattern.exec(text)) !== null) {
         points.push(match.index);
       }
     }
-    
+
     return [...new Set(points)].sort((a, b) => a - b);
   }
 }
@@ -763,17 +763,17 @@ export class ErrorRecoveryParser {
 import { LRUCache } from 'lru-cache';
 
 export class CacheManager {
-  private parseCache = new LRUCache<string, ParseResult>({ 
+  private parseCache = new LRUCache<string, ParseResult>({
     max: 100,
     ttl: 1000 * 60 * 5 // 5 minutes
   });
-  
+
   private documentCache = new WeakMap<TextDocument, DocumentState>();
-  
+
   getCachedParse(content: string): ParseResult | undefined {
     return this.parseCache.get(content);
   }
-  
+
   setCachedParse(content: string, result: ParseResult): void {
     this.parseCache.set(content, result);
   }
@@ -789,7 +789,7 @@ export function debounce<T extends (...args: any[]) => any>(
   wait: number
 ): (...args: Parameters<T>) => void {
   let timeout: NodeJS.Timeout | undefined;
-  
+
   return function executedFunction(...args: Parameters<T>) {
     clearTimeout(timeout);
     timeout = setTimeout(() => func(...args), wait);
@@ -808,17 +808,17 @@ const debouncedValidate = debounce(validateDocument, 300);
 // server/src/parser/__tests__/FHIRPathService.test.ts
 describe('FHIRPathService', () => {
   let service: FHIRPathService;
-  
+
   beforeEach(() => {
     service = new FHIRPathService();
   });
-  
+
   test('parses valid expressions', () => {
     const result = service.parse('Patient.name.given');
     expect(result.success).toBe(true);
     expect(result.errors).toHaveLength(0);
   });
-  
+
   test('handles syntax errors gracefully', () => {
     const result = service.parse('Patient.name[');
     expect(result.success).toBe(false);
@@ -836,10 +836,10 @@ suite('FHIRPath Diagnostics', () => {
     const docUri = vscode.Uri.file(
       path.join(__dirname, '../fixtures/invalid.fhirpath')
     );
-    
+
     await vscode.workspace.openTextDocument(docUri);
     const diagnostics = await getDiagnostics(docUri, 1000);
-    
+
     assert.strictEqual(diagnostics.length, 1);
     assert.strictEqual(diagnostics[0].severity, vscode.DiagnosticSeverity.Error);
   });
@@ -867,7 +867,7 @@ async function build() {
     sourcemap: true,
     minify: process.env.NODE_ENV === 'production'
   });
-  
+
   // Build server
   await esbuild.build({
     entryPoints: ['server/src/server.ts'],
