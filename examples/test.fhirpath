@@ -1,0 +1,5 @@
+// Test FHIRPath file
+Patient.name.given
+Patient.name.where(use = 'official')
+Patient.birthDate.exists()
+Observation.value.as(Quantity).value > 10

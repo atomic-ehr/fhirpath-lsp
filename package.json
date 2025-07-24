@@ -1,12 +1,37 @@
 {
   "name": "fhirpath-lsp",
-  "module": "index.ts",
-  "type": "module",
+  "version": "0.1.0",
+  "description": "FHIRPath Language Server Protocol implementation",
   "private": true,
-  "devDependencies": {
-    "@types/bun": "latest"
+  "workspaces": [
+    "client",
+    "server",
+    "shared"
+  ],
+  "scripts": {
+    "compile": "bun run compile:shared && bun run compile:client && bun run compile:server",
+    "compile:client": "cd client && bun run compile",
+    "compile:server": "cd server && bun run compile",
+    "compile:shared": "cd shared && bun run compile",
+    "watch": "bun run watch:shared & bun run watch:client & bun run watch:server",
+    "watch:client": "cd client && bun run watch",
+    "watch:server": "cd server && bun run watch",
+    "watch:shared": "cd shared && bun run watch",
+    "test": "bun test",
+    "vscode:prepublish": "bun run compile",
+    "build": "bun run build:client && bun run build:server",
+    "build:client": "bun build ./client/src/extension.ts --outfile=client/out/extension.js --external=vscode --format=cjs --platform=node",
+    "build:server": "bun build ./server/src/server.ts --outfile=server/out/server.js --external=vscode-languageserver --format=cjs --platform=node"
   },
-  "peerDependencies": {
-    "typescript": "^5"
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/node": "^20.11.0",
+    "typescript": "^5.3.3"
+  },
+  "author": "Atomic EHR",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/atomic-ehr-org/fhirpath-lsp"
   }
 }

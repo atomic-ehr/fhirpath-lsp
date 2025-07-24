@@ -1,0 +1,22 @@
+// Example FHIRPath expressions for testing
+
+// Basic path navigation
+Patient.name.given
+Patient.name.where(use = 'official').given.first()
+
+// Functions
+Patient.birthDate.exists()
+Patient.name.count() > 1
+
+// Complex expressions
+Observation.where(
+  code.coding.exists(system = 'http://loinc.org' and code = '8310-5')
+).value.as(Quantity).value
+
+// String operations
+Patient.name.given.startsWith('J')
+Patient.identifier.where(system.contains('ssn'))
+
+// Arithmetic
+Observation.value.as(Quantity).value * 2.2
+MedicationRequest.dosageInstruction.timing.repeat.period + 1
