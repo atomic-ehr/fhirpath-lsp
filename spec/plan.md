@@ -16,7 +16,7 @@ Create a professional-grade FHIRPath language support system that provides devel
 4. **Cross-Editor Compatibility**: Design for LSP portability beyond VS Code
 
 ### Technology Stack
-- **Parser**: HL7 FHIRPath.js (official implementation)
+- **Parser**: atomic-ehr/fhirpath (TypeScript implementation with AST support)
 - **LSP Framework**: Microsoft vscode-languageserver-node
 - **Build System**: TypeScript with ESBuild
 - **Testing**: Jest + VS Code Extension Test Framework
@@ -40,7 +40,7 @@ Create a professional-grade FHIRPath language support system that provides devel
 | Direct VS Code Extension | Simpler initial setup | Not portable to other editors | ❌ Rejected |
 | TextMate Grammar Only | Quick implementation | No dynamic features | ❌ Rejected |
 | Custom Parser Implementation | Full control | Duplicates existing work | ❌ Rejected |
-| LSP with FHIRPath.js | Reuses official parser, portable | More complex setup | ✅ Selected |
+| LSP with atomic-ehr/fhirpath | TypeScript native, AST access, portable | More complex setup | ✅ Selected |
 
 ## Technical Architecture
 
@@ -68,8 +68,8 @@ Create a professional-grade FHIRPath language support system that provides devel
 │  └─────────────────────────────────────────────────────┘   │
 │  ┌─────────────────────────────────────────────────────┐   │
 │  │              FHIRPath Parser Layer                   │   │
-│  │  - HL7 FHIRPath.js      - Error Recovery           │   │
-│  │  - Token Extraction     - AST Analysis             │   │
+│  │  - atomic-ehr/fhirpath  - Error Recovery           │   │
+│  │  - AST Analysis         - Type Analysis            │   │
 │  └─────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -137,7 +137,7 @@ fhirpath-lsp/
     "vscode-languageserver-textdocument": "^1.0.11",
     "vscode-languageserver-types": "^3.17.5",
     "vscode-languageclient": "^9.0.1",
-    "fhirpath": "^3.15.2",
+    "@atomic-ehr/fhirpath": "^1.0.0",
     "@types/fhir": "^0.0.41",
     "lodash": "^4.17.21",
     "lru-cache": "^10.1.0"
@@ -151,14 +151,41 @@ fhirpath-lsp/
 
 ```typescript
 // server/src/parser/FHIRPathService.ts
-import * as fhirpath from 'fhirpath';
-import r4_model from 'fhirpath/fhir-context/r4';
+import * as fhirpath from '@atomic-ehr/fhirpath';
 
 export interface ParseResult {
   success: boolean;
-  ast?: any;
+  ast?: fhirpath.FHIRPathExpression;
   errors: ParseError[];
   tokens?: Token[];
+}
+
+export interface ParseError {
+  message: string;
+  line: number;
+  column: number;
+  offset: number;
+  length: number;
+}
+
+export interface Token {
+  type: TokenType;
+  value: string;
+  start: number;
+  end: number;
+  line: number;
+  column: number;
+}
+
+export enum TokenType {
+  Identifier = 'identifier',
+  Function = 'function',
+  Operator = 'operator',
+  Keyword = 'keyword',
+  String = 'string',
+  Number = 'number',
+  Boolean = 'boolean',
+  Punctuation = 'punctuation'
 }
 
 export class FHIRPathService {
@@ -166,14 +193,19 @@ export class FHIRPathService {
   
   parse(expression: string): ParseResult {
     try {
-      const compiled = fhirpath.compile(expression, r4_model);
+      // Parse the expression to get AST
+      const ast = fhirpath.parse(expression);
+      
+      // Compile for caching
+      const compiled = fhirpath.compile(ast);
       this.compiledCache.set(expression, compiled);
       
-      // Extract tokens through lexical analysis
-      const tokens = this.tokenize(expression);
+      // Extract tokens from AST
+      const tokens = this.extractTokensFromAST(ast, expression);
       
       return {
         success: true,
+        ast,
         tokens,
         errors: []
       };
@@ -185,51 +217,226 @@ export class FHIRPathService {
     }
   }
   
-  private tokenize(expression: string): Token[] {
-    // Implementation using regex patterns for FHIRPath tokens
-    const patterns = [
-      { regex: /'([^'\\]|\\.)*'/g, type: TokenType.String },
-      { regex: /\b\d+(\.\d+)?\b/g, type: TokenType.Number },
-      { regex: /\b(true|false|null)\b/g, type: TokenType.Keyword },
-      { regex: /\b(where|select|exists|all|empty|first|last)\b/g, type: TokenType.Keyword },
-      { regex: /\b(count|distinct|union|intersect)\b(?=\s*\()/g, type: TokenType.Function },
-      { regex: /[+\-*\/<>=!]+/g, type: TokenType.Operator },
-      { regex: /[()[\]{},.]/g, type: TokenType.Punctuation },
-      { regex: /\b[a-zA-Z_][a-zA-Z0-9_]*\b/g, type: TokenType.Identifier }
-    ];
+  analyze(expression: string | fhirpath.FHIRPathExpression): any {
+    // Use the analyze function for type analysis
+    return fhirpath.analyze(expression);
+  }
+  
+  private extractTokensFromAST(ast: fhirpath.FHIRPathExpression, expression: string): Token[] {
+    const tokens: Token[] = [];
     
-    // Process patterns and extract tokens with positions
-    // ... implementation details
+    // Walk the AST and extract tokens
+    const walkAST = (node: any, parent?: any) => {
+      if (!node) return;
+      
+      // Determine token type based on node type
+      let tokenType: TokenType | null = null;
+      let value: string | null = null;
+      
+      switch (node.type) {
+        case 'Identifier':
+          tokenType = TokenType.Identifier;
+          value = node.name;
+          break;
+        case 'FunctionCall':
+          tokenType = TokenType.Function;
+          value = node.name;
+          break;
+        case 'StringLiteral':
+          tokenType = TokenType.String;
+          value = node.value;
+          break;
+        case 'NumberLiteral':
+          tokenType = TokenType.Number;
+          value = node.value.toString();
+          break;
+        case 'BooleanLiteral':
+          tokenType = TokenType.Boolean;
+          value = node.value.toString();
+          break;
+        case 'BinaryOperator':
+          tokenType = TokenType.Operator;
+          value = node.operator;
+          break;
+      }
+      
+      if (tokenType && value && node.location) {
+        tokens.push({
+          type: tokenType,
+          value,
+          start: node.location.start.offset,
+          end: node.location.end.offset,
+          line: node.location.start.line - 1,
+          column: node.location.start.column - 1
+        });
+      }
+      
+      // Recursively walk child nodes
+      if (node.children) {
+        for (const child of node.children) {
+          walkAST(child, node);
+        }
+      }
+    };
+    
+    walkAST(ast);
+    return tokens.sort((a, b) => a.start - b.start);
+  }
+  
+  private parseErrorFromException(error: any, expression: string): ParseError {
+    // Check if error has location information
+    if (error.location) {
+      return {
+        message: error.message || 'Parse error',
+        line: error.location.start.line - 1,
+        column: error.location.start.column - 1,
+        offset: error.location.start.offset,
+        length: error.location.end.offset - error.location.start.offset
+      };
+    }
+    
+    // Fallback to regex parsing
+    const match = error.message?.match(/at position (\d+)/);
+    const offset = match ? parseInt(match[1]) : 0;
+    
+    return {
+      message: error.message || 'Parse error',
+      line: this.offsetToLine(expression, offset),
+      column: this.offsetToColumn(expression, offset),
+      offset,
+      length: 1
+    };
+  }
+  
+  private offsetToLine(text: string, offset: number): number {
+    return text.substring(0, offset).split('\n').length - 1;
+  }
+  
+  private offsetToColumn(text: string, offset: number): number {
+    const lines = text.substring(0, offset).split('\n');
+    return lines[lines.length - 1].length;
   }
 }
 ```
 
-#### 1.2 Diagnostic Provider
+#### 1.2 Server Initialization
+
+```typescript
+// server/src/server.ts
+import {
+  createConnection,
+  TextDocuments,
+  ProposedFeatures,
+  InitializeParams,
+  InitializeResult,
+  TextDocumentSyncKind,
+  CompletionItem,
+  CompletionItemKind,
+  SemanticTokensBuilder
+} from 'vscode-languageserver/node';
+
+import { TextDocument } from 'vscode-languageserver-textdocument';
+
+// Create connection using Node IPC
+const connection = createConnection(ProposedFeatures.all);
+
+// Document manager using the new text document API
+const documents: TextDocuments<TextDocument> = new TextDocuments(TextDocument);
+
+// Token types and modifiers for semantic highlighting
+const tokenTypes = ['function', 'parameter', 'variable', 'property', 'operator', 'keyword', 'string', 'number', 'boolean', 'comment'];
+const tokenModifiers = ['declaration', 'readonly', 'deprecated', 'modification', 'documentation', 'defaultLibrary'];
+
+connection.onInitialize((params: InitializeParams): InitializeResult => {
+  return {
+    capabilities: {
+      textDocumentSync: TextDocumentSyncKind.Incremental,
+      diagnosticProvider: {
+        interFileDependencies: false,
+        workspaceDiagnostics: false
+      },
+      semanticTokensProvider: {
+        legend: {
+          tokenTypes,
+          tokenModifiers
+        },
+        full: true,
+        range: true
+      },
+      completionProvider: {
+        resolveProvider: true,
+        triggerCharacters: ['.', '[', '(', ' ', '"', "'"]
+      },
+      hoverProvider: true,
+      definitionProvider: true
+    }
+  };
+});
+
+// Document change handling with validation
+documents.onDidChangeContent(change => {
+  validateTextDocument(change.document);
+});
+
+async function validateTextDocument(textDocument: TextDocument): Promise<void> {
+  const diagnostics = await diagnosticProvider.provideDiagnostics(textDocument);
+  connection.sendDiagnostics({ uri: textDocument.uri, diagnostics });
+}
+
+documents.listen(connection);
+connection.listen();
+```
+
+#### 1.3 Diagnostic Provider
 
 ```typescript
 // server/src/providers/DiagnosticProvider.ts
+interface IValidator {
+  validate(ast: any, document: TextDocument): Promise<Diagnostic[]>;
+}
+
 export class DiagnosticProvider {
+  private validators: IValidator[] = [
+    new SyntaxValidator(),
+    new PathValidator(),
+    new FunctionValidator(),
+    new TypeValidator()
+  ];
+  
   constructor(private fhirPathService: FHIRPathService) {}
   
   async provideDiagnostics(document: TextDocument): Promise<Diagnostic[]> {
     const text = document.getText();
+    const diagnostics: Diagnostic[] = [];
+    
+    // First, check for syntax errors
     const parseResult = this.fhirPathService.parse(text);
     
-    return parseResult.errors.map(error => ({
-      severity: DiagnosticSeverity.Error,
-      range: {
-        start: document.positionAt(error.offset),
-        end: document.positionAt(error.offset + error.length)
-      },
-      message: error.message,
-      source: 'fhirpath',
-      code: error.code
-    }));
+    if (!parseResult.success) {
+      return parseResult.errors.map(error => ({
+        severity: DiagnosticSeverity.Error,
+        range: {
+          start: document.positionAt(error.offset),
+          end: document.positionAt(error.offset + error.length)
+        },
+        message: error.message,
+        source: 'fhirpath',
+        code: error.code
+      }));
+    }
+    
+    // Run semantic validators
+    for (const validator of this.validators) {
+      const issues = await validator.validate(parseResult.ast, document);
+      diagnostics.push(...issues);
+    }
+    
+    return diagnostics;
   }
 }
 ```
 
-#### 1.3 TextMate Grammar
+#### 1.4 TextMate Grammar
 
 ```json
 {
@@ -272,7 +479,60 @@ export class CompletionProvider {
       detail: 'where(criteria: expression) -> collection',
       documentation: 'Filters the collection based on criteria'
     }],
-    // ... more functions
+    ['select', {
+      label: 'select',
+      kind: CompletionItemKind.Function,
+      detail: 'select(projection: expression) -> collection',
+      documentation: 'Projects each item in the collection'
+    }],
+    ['exists', {
+      label: 'exists',
+      kind: CompletionItemKind.Function,
+      detail: 'exists(criteria?: expression) -> boolean',
+      documentation: 'Returns true if any element matches criteria'
+    }],
+    ['count', {
+      label: 'count',
+      kind: CompletionItemKind.Function,
+      detail: 'count() -> integer',
+      documentation: 'Returns the number of items in the collection'
+    }],
+    ['first', {
+      label: 'first',
+      kind: CompletionItemKind.Function,
+      detail: 'first() -> item',
+      documentation: 'Returns the first item in the collection'
+    }],
+    ['last', {
+      label: 'last',
+      kind: CompletionItemKind.Function,
+      detail: 'last() -> item',
+      documentation: 'Returns the last item in the collection'
+    }],
+    ['matches', {
+      label: 'matches',
+      kind: CompletionItemKind.Function,
+      detail: 'matches(regex: string) -> boolean',
+      documentation: 'Tests if the string matches the regular expression'
+    }],
+    ['contains', {
+      label: 'contains',
+      kind: CompletionItemKind.Function,
+      detail: 'contains(substring: string) -> boolean',
+      documentation: 'Tests if the string contains the substring'
+    }],
+    ['startsWith', {
+      label: 'startsWith',
+      kind: CompletionItemKind.Function,
+      detail: 'startsWith(prefix: string) -> boolean',
+      documentation: 'Tests if the string starts with the prefix'
+    }],
+    ['endsWith', {
+      label: 'endsWith',
+      kind: CompletionItemKind.Function,
+      detail: 'endsWith(suffix: string) -> boolean',
+      documentation: 'Tests if the string ends with the suffix'
+    }]
   ]);
   
   provideCompletions(
@@ -303,19 +563,23 @@ export class CompletionProvider {
 // server/src/providers/SemanticTokenProvider.ts
 export class SemanticTokenProvider {
   private tokenTypeMap = new Map<TokenType, number>([
-    [TokenType.Function, 0],
-    [TokenType.Property, 3],
-    [TokenType.Operator, 4],
-    [TokenType.Keyword, 5],
-    [TokenType.String, 6],
-    [TokenType.Number, 7]
+    [TokenType.Function, 0],     // 'function'
+    [TokenType.Identifier, 1],   // 'parameter'
+    [TokenType.Identifier, 2],   // 'variable'  
+    [TokenType.Identifier, 3],   // 'property'
+    [TokenType.Operator, 4],     // 'operator'
+    [TokenType.Keyword, 5],      // 'keyword'
+    [TokenType.String, 6],       // 'string'
+    [TokenType.Number, 7],       // 'number'
+    [TokenType.Boolean, 8]       // 'boolean'
   ]);
   
   provideSemanticTokens(document: TextDocument): SemanticTokens {
     const builder = new SemanticTokensBuilder();
     const parseResult = this.fhirPathService.parse(document.getText());
     
-    if (parseResult.tokens) {
+    if (parseResult.success && parseResult.tokens) {
+      // Use AST-extracted tokens for accurate highlighting
       for (const token of parseResult.tokens) {
         const position = document.positionAt(token.start);
         builder.push(
@@ -323,17 +587,174 @@ export class SemanticTokenProvider {
           position.character,
           token.end - token.start,
           this.tokenTypeMap.get(token.type) || 0,
-          0
+          0 // no modifiers for now
         );
       }
+    } else {
+      // Fallback to regex-based tokenization if AST parsing fails
+      this.fallbackTokenization(document.getText(), builder);
     }
     
     return builder.build();
   }
+  
+  private fallbackTokenization(text: string, builder: SemanticTokensBuilder): void {
+    // Simple regex-based tokenization for partial syntax highlighting
+    const patterns = [
+      { regex: /\b(where|select|exists|all|empty|first|last)\b/g, type: 5 }, // keywords
+      { regex: /\b(true|false|null)\b/g, type: 8 }, // booleans
+      { regex: /'([^'\\]|\\.)*'/g, type: 6 }, // strings
+      { regex: /\b\d+(\.\d+)?\b/g, type: 7 }, // numbers
+    ];
+    
+    for (const pattern of patterns) {
+      let match;
+      while ((match = pattern.regex.exec(text)) !== null) {
+        const lines = text.substring(0, match.index).split('\n');
+        const line = lines.length - 1;
+        const character = lines[line].length;
+        
+        builder.push(line, character, match[0].length, pattern.type, 0);
+      }
+    }
+  }
+}
+```
+
+### Extension Client Implementation
+
+```typescript
+// client/src/extension.ts
+import * as path from 'path';
+import { 
+  workspace, 
+  ExtensionContext,
+  window,
+  commands
+} from 'vscode';
+
+import {
+  LanguageClient,
+  LanguageClientOptions,
+  ServerOptions,
+  TransportKind
+} from 'vscode-languageclient/node';
+
+let client: LanguageClient;
+
+export function activate(context: ExtensionContext) {
+  const serverModule = context.asAbsolutePath(
+    path.join('server', 'out', 'server.js')
+  );
+  
+  const debugOptions = { execArgv: ['--nolazy', '--inspect=6009'] };
+  
+  const serverOptions: ServerOptions = {
+    run: { 
+      module: serverModule, 
+      transport: TransportKind.ipc 
+    },
+    debug: {
+      module: serverModule,
+      transport: TransportKind.ipc,
+      options: debugOptions
+    }
+  };
+  
+  const clientOptions: LanguageClientOptions = {
+    documentSelector: [
+      { scheme: 'file', language: 'fhirpath' },
+      { scheme: 'untitled', language: 'fhirpath' }
+    ],
+    synchronize: {
+      fileEvents: workspace.createFileSystemWatcher('**/*.fhirpath'),
+      configurationSection: 'fhirpath'
+    },
+    middleware: {
+      provideCompletionItem: async (document, position, context, token, next) => {
+        // Add custom logic here if needed
+        return next(document, position, context, token);
+      }
+    }
+  };
+  
+  client = new LanguageClient(
+    'fhirpathLanguageServer',
+    'FHIRPath Language Server',
+    serverOptions,
+    clientOptions
+  );
+  
+  // Register commands
+  const validateCommand = commands.registerCommand('fhirpath.validateExpression', () => {
+    const editor = window.activeTextEditor;
+    if (editor && editor.document.languageId === 'fhirpath') {
+      window.showInformationMessage('Validating FHIRPath expression...');
+      // Trigger validation
+      client.sendRequest('fhirpath/validate', {
+        uri: editor.document.uri.toString(),
+        content: editor.document.getText()
+      });
+    }
+  });
+  
+  context.subscriptions.push(validateCommand);
+  client.start();
+}
+
+export function deactivate(): Thenable<void> | undefined {
+  if (!client) {
+    return undefined;
+  }
+  return client.stop();
 }
 ```
 
 ## Performance Optimization
+
+### Error Recovery Strategy
+
+```typescript
+// server/src/parser/ErrorRecovery.ts
+export class ErrorRecoveryParser {
+  parse(text: string): ParseResult {
+    const errors: ParseError[] = [];
+    const recoveryPoints = this.findRecoveryPoints(text);
+    
+    // Attempt parsing segments between recovery points
+    const segments = this.splitByRecoveryPoints(text, recoveryPoints);
+    const partialASTs = segments.map(segment => 
+      this.parseSegment(segment, errors)
+    );
+    
+    return {
+      ast: this.mergePartialASTs(partialASTs),
+      errors,
+      partial: true
+    };
+  }
+  
+  private findRecoveryPoints(text: string): number[] {
+    // Find natural break points in FHIRPath expressions
+    const points: number[] = [0];
+    const patterns = [
+      /\s+and\s+/g,
+      /\s+or\s+/g,
+      /\s*\|\s*/g,  // Union operator
+      /\s*\.\s*/g   // Path separator
+    ];
+    
+    for (const pattern of patterns) {
+      let match;
+      while ((match = pattern.exec(text)) !== null) {
+        points.push(match.index);
+      }
+    }
+    
+    return [...new Set(points)].sort((a, b) => a - b);
+  }
+}
+```
 
 ### Caching Strategy
 
@@ -474,6 +895,7 @@ build().catch(() => process.exit(1));
   "engines": {
     "vscode": "^1.84.0"
   },
+  "categories": ["Programming Languages"],
   "activationEvents": ["onLanguage:fhirpath"],
   "main": "./client/out/extension",
   "contributes": {
@@ -489,31 +911,136 @@ build().catch(() => process.exit(1));
       "path": "./syntaxes/fhirpath.tmGrammar.json"
     }],
     "configuration": {
+      "type": "object",
       "title": "FHIRPath",
       "properties": {
         "fhirpath.validate.enable": {
+          "scope": "resource",
           "type": "boolean",
           "default": true,
           "description": "Enable/disable FHIRPath validation"
         },
+        "fhirpath.validate.delay": {
+          "scope": "resource",
+          "type": "number",
+          "default": 300,
+          "description": "Delay in milliseconds before validation triggers"
+        },
         "fhirpath.trace.server": {
+          "scope": "window",
           "type": "string",
           "enum": ["off", "messages", "verbose"],
-          "default": "off"
+          "default": "off",
+          "description": "Traces the communication between VS Code and the language server"
+        },
+        "fhirpath.fhirVersion": {
+          "scope": "resource",
+          "type": "string",
+          "enum": ["R4", "STU3", "DSTU2"],
+          "default": "R4",
+          "description": "FHIR version for validation and completion"
         }
+      }
+    },
+    "commands": [{
+      "command": "fhirpath.validateExpression",
+      "title": "FHIRPath: Validate Expression"
+    }],
+    "configurationDefaults": {
+      "[fhirpath]": {
+        "editor.semanticHighlighting.enabled": true
       }
     }
   }
 }
 ```
 
+### Language Configuration
+
+```json
+// language-configuration.json
+{
+  "comments": {
+    "lineComment": "//",
+    "blockComment": ["/*", "*/"]
+  },
+  "brackets": [
+    ["{", "}"],
+    ["[", "]"],
+    ["(", ")"]
+  ],
+  "autoClosingPairs": [
+    ["{", "}"],
+    ["[", "]"],
+    ["(", ")"],
+    ["\"", "\""],
+    ["'", "'"]
+  ],
+  "surroundingPairs": [
+    ["{", "}"],
+    ["[", "]"],
+    ["(", ")"],
+    ["\"", "\""],
+    ["'", "'"]
+  ],
+  "folding": {
+    "markers": {
+      "start": "^\\s*//\\s*#?region\\b",
+      "end": "^\\s*//\\s*#?endregion\\b"
+    }
+  },
+  "wordPattern": "(-?\\d*\\.\\d\\w*)|([^\\`\\~\\!\\@\\#\\%\\^\\&\\*\\(\\)\\-\\=\\+\\[\\{\\]\\}\\\\\\|\\;\\:\\'\\\"\\,\\.\\<\\>\\/\\?\\s]+)"
+}
+```
+
+### VS Code Debugging Configuration
+
+```json
+// .vscode/launch.json
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Launch Extension",
+      "type": "extensionHost",
+      "request": "launch",
+      "runtimeExecutable": "${execPath}",
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}"
+      ],
+      "outFiles": [
+        "${workspaceFolder}/client/out/**/*.js",
+        "${workspaceFolder}/server/out/**/*.js"
+      ],
+      "preLaunchTask": "npm: compile"
+    },
+    {
+      "name": "Attach to Server",
+      "type": "node",
+      "request": "attach",
+      "port": 6009,
+      "restart": true,
+      "outFiles": ["${workspaceFolder}/server/out/**/*.js"]
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Client + Server",
+      "configurations": ["Launch Extension", "Attach to Server"]
+    }
+  ]
+}
+```
+
 ## Timeline and Milestones
 
-| Phase | Duration | Deliverables | Success Criteria |
-|-------|----------|--------------|------------------|
-| Phase 1 | 3 weeks | - Basic LSP server<br>- Syntax highlighting<br>- Error detection | - .fhirpath files recognized<br>- Syntax errors shown<br>- Keywords highlighted |
-| Phase 2 | 2 weeks | - Auto-completion<br>- Function signatures<br>- Context awareness | - Function suggestions work<br>- Completion on dot operator<br>- < 200ms response time |
-| Phase 3 | 3 weeks | - Semantic tokens<br>- Hover information<br>- Performance optimization | - Enhanced highlighting<br>- Function documentation on hover<br>- < 100ms parse time |
+| Phase | Duration | Deliverables | Success Criteria | Estimated Hours |
+|-------|----------|--------------|------------------|-----------------|
+| Phase 1 | 3 weeks | - Basic LSP server<br>- Syntax highlighting<br>- Error detection<br>- TextMate grammar | - .fhirpath files recognized<br>- Syntax errors shown with line/column<br>- Keywords highlighted<br>- Basic operators colored | 40-50 hours |
+| Phase 2 | 2 weeks | - Auto-completion<br>- Function signatures<br>- Context awareness<br>- Trigger characters | - Function suggestions work<br>- Completion on dot operator<br>- < 200ms response time<br>- All FHIRPath functions available | 30-40 hours |
+| Phase 3 | 3 weeks | - Semantic tokens<br>- Hover information<br>- Performance optimization<br>- Error recovery | - Enhanced highlighting<br>- Function documentation on hover<br>- < 100ms parse time<br>- Partial parsing on errors | 30-40 hours |
+
+**Total Estimated Effort**: 100-130 hours (80-120 development + 20-30 testing/documentation)
 
 ## Risk Mitigation
 
@@ -549,6 +1076,6 @@ build().catch(() => process.exit(1));
 
 ## Conclusion
 
-This comprehensive plan combines the best architectural insights from multiple analyses to create a robust, performant, and extensible FHIRPath language support system. By leveraging the official HL7 FHIRPath.js library and following LSP best practices, we ensure compatibility, reliability, and future-proofing. The phased approach allows for iterative development with clear milestones and measurable success criteria.
+This comprehensive plan combines the best architectural insights from multiple analyses to create a robust, performant, and extensible FHIRPath language support system. By leveraging the atomic-ehr/fhirpath library with its native TypeScript implementation and AST access, we ensure type safety, better error handling, and direct access to the parse tree for semantic analysis. The phased approach allows for iterative development with clear milestones and measurable success criteria.
 
-The implementation prioritizes developer experience through intelligent features while maintaining the flexibility to support multiple editors through the Language Server Protocol. With proper caching, debouncing, and optimization strategies, the solution will provide responsive, real-time feedback even for complex FHIRPath expressions.
+The implementation prioritizes developer experience through intelligent features while maintaining the flexibility to support multiple editors through the Language Server Protocol. With proper caching, debouncing, and optimization strategies, the solution will provide responsive, real-time feedback even for complex FHIRPath expressions. The atomic-ehr/fhirpath library's built-in AST and type analysis capabilities make it ideal for providing rich language features like semantic highlighting and context-aware completions.
