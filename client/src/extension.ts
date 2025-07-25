@@ -6,7 +6,9 @@ import {
   commands,
   StatusBarAlignment,
   ConfigurationTarget,
-  Uri
+  Uri,
+  CodeAction,
+  Command
 } from 'vscode';
 
 import {
@@ -14,7 +16,9 @@ import {
   LanguageClientOptions,
   ServerOptions,
   TransportKind,
-  RevealOutputChannelOn
+  RevealOutputChannelOn,
+  ErrorAction,
+  CloseAction
 } from 'vscode-languageclient/node';
 
 let client: LanguageClient;
@@ -30,13 +34,13 @@ export function activate(context: ExtensionContext) {
   statusBarItem.text = "$(loading~spin) FHIRPath";
   statusBarItem.tooltip = "FHIRPath Language Server starting...";
   statusBarItem.show();
-  
+
   // Start the language server
   startLanguageServer(context);
-  
+
   // Register commands
   registerCommands(context);
-  
+
   console.log('FHIRPath Language Extension activated');
 }
 
@@ -50,15 +54,15 @@ function startLanguageServer(context: ExtensionContext) {
   );
 
   // Debug options for the server
-  const debugOptions = { 
-    execArgv: ['--nolazy', '--inspect=6009'] 
+  const debugOptions = {
+    execArgv: ['--nolazy', '--inspect=6009']
   };
 
   // Server options
   const serverOptions: ServerOptions = {
-    run: { 
-      module: serverModule, 
-      transport: TransportKind.ipc 
+    run: {
+      module: serverModule,
+      transport: TransportKind.ipc
     },
     debug: {
       module: serverModule,
@@ -74,7 +78,7 @@ function startLanguageServer(context: ExtensionContext) {
       { scheme: 'file', language: 'fhirpath' },
       { scheme: 'untitled', language: 'fhirpath' }
     ],
-    
+
     // Synchronize the setting section 'fhirpath' to the server
     synchronize: {
       fileEvents: workspace.createFileSystemWatcher('**/*.{fhirpath,fhir}'),
@@ -83,7 +87,6 @@ function startLanguageServer(context: ExtensionContext) {
 
     // Output channel for language server logs
     outputChannel: window.createOutputChannel('FHIRPath Language Server'),
-    outputChannelName: 'FHIRPath Language Server',
     revealOutputChannelOn: RevealOutputChannelOn.Never,
 
     // Middleware for handling requests/responses
@@ -94,7 +97,7 @@ function startLanguageServer(context: ExtensionContext) {
         return next(document, position, context, token);
       },
 
-      // Custom diagnostic middleware  
+      // Custom diagnostic middleware
       handleDiagnostics: (uri, diagnostics, next) => {
         // Update status bar based on diagnostics
         updateStatusBar(diagnostics.length);
@@ -104,7 +107,7 @@ function startLanguageServer(context: ExtensionContext) {
       // Code action middleware to prioritize our actions over others (like Copilot)
       provideCodeActions: async (document, range, context, token, next) => {
         console.log('Code action middleware: intercepting request');
-        
+
         // Only for FHIRPath files
         if (document.languageId !== 'fhirpath') {
           return next(document, range, context, token);
@@ -112,18 +115,18 @@ function startLanguageServer(context: ExtensionContext) {
 
         // Get our actions first
         const ourActions = await next(document, range, context, token);
-        
+
         // Filter and prioritize our actions
         if (Array.isArray(ourActions)) {
           console.log(`Code action middleware: got ${ourActions.length} actions`);
-          
+
           // Mark all our actions as high priority and preferred
-          const prioritizedActions = ourActions.map((action: any) => {
+          const prioritizedActions = ourActions.map((action: Command | CodeAction) => {
             if (action.title && action.title.includes('FHIRPath')) {
               return {
                 ...action,
                 isPreferred: true,
-                priority: (action.priority || 0) + 10000
+                priority: ((action as any).priority || 0) + 10000
               };
             }
             return action;
@@ -142,13 +145,13 @@ function startLanguageServer(context: ExtensionContext) {
         console.error('Language server error:', error, message, count);
         statusBarItem.text = "$(error) FHIRPath Error";
         statusBarItem.tooltip = `FHIRPath Language Server error: ${error.message}`;
-        return { action: 'continue' };
+        return { action: ErrorAction.Continue };
       },
       closed: () => {
         console.log('Language server connection closed');
         statusBarItem.text = "$(debug-disconnect) FHIRPath Disconnected";
         statusBarItem.tooltip = "FHIRPath Language Server disconnected";
-        return { action: 'restart' };
+        return { action: CloseAction.Restart };
       }
     }
   };
@@ -190,14 +193,14 @@ function registerCommands(context: ExtensionContext) {
 
     const document = editor.document;
     const text = document.getText();
-    
+
     if (!text.trim()) {
       window.showInformationMessage('Document is empty');
       return;
     }
 
     window.showInformationMessage('Validating FHIRPath expression...');
-    
+
     try {
       // Trigger validation by requesting diagnostics
       await commands.executeCommand('vscode.executeDiagnosticProvider', document.uri);
@@ -250,12 +253,12 @@ function registerCommands(context: ExtensionContext) {
         statusBarItem.text = "$(loading~spin) FHIRPath Restarting";
         statusBarItem.tooltip = "Restarting FHIRPath Language Server...";
       }
-      
+
       // Wait a moment then restart
       setTimeout(() => {
         startLanguageServer(context);
       }, 1000);
-      
+
       window.showInformationMessage('FHIRPath Language Server restarted');
     } catch (error) {
       window.showErrorMessage(`Failed to restart server: ${error}`);
@@ -340,15 +343,15 @@ function updateStatusBar(errorCount: number) {
  */
 export function deactivate(): Thenable<void> | undefined {
   console.log('FHIRPath Language Extension deactivating...');
-  
+
   if (statusBarItem) {
     statusBarItem.dispose();
   }
-  
+
   if (!client) {
     return undefined;
   }
-  
+
   return client.stop().then(() => {
     console.log('FHIRPath Language Extension deactivated');
   });

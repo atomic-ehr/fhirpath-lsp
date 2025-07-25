@@ -40,7 +40,7 @@ export interface SymbolEntry {
   context?: string;
   fhirPath?: string;
   detail?: string;
-  
+
   // Indexing metadata
   fileUri: string;
   lastModified: number;
@@ -55,14 +55,14 @@ export interface SymbolIndex {
   symbols: Map<string, SymbolEntry[]>; // name -> entries
   fileIndex: Map<string, SymbolEntry[]>; // fileUri -> entries
   kindIndex: Map<FHIRPathSymbolKind, SymbolEntry[]>; // kind -> entries
-  
+
   // Metadata
   lastUpdated: Map<string, number>; // fileUri -> timestamp
   totalSymbols: number;
   indexSize: number; // Memory usage estimate
-  
+
   // Search optimization
-  searchCache: Map<string, WorkspaceSymbolResult[]>; // query -> results
+  searchCache: Map<string, FuzzySearchResult[]>; // query -> results
   cacheHits: number;
   cacheMisses: number;
 }
@@ -97,7 +97,7 @@ export interface IndexingStats {
   indexingTime: number; // milliseconds
   memoryUsage: number; // bytes
   lastIndexed: number; // timestamp
-  
+
   // Performance metrics
   averageSearchTime: number;
   cacheHitRate: number;
@@ -124,22 +124,22 @@ export interface IWorkspaceSymbolProvider {
    * Search for symbols across the workspace
    */
   search(query: WorkspaceSymbolQuery): Promise<WorkspaceSymbolResult[]>;
-  
+
   /**
    * Index a file for symbol search
    */
   indexFile(uri: string): Promise<void>;
-  
+
   /**
    * Remove a file from the index
    */
   removeFile(uri: string): Promise<void>;
-  
+
   /**
    * Get indexing statistics
    */
   getStats(): IndexingStats;
-  
+
   /**
    * Clear the symbol index
    */
@@ -154,32 +154,32 @@ export interface ISymbolIndexService {
    * Initialize the index with workspace files
    */
   initialize(workspaceFolders: string[]): Promise<void>;
-  
+
   /**
    * Add or update symbols for a file
    */
   updateFile(uri: string, symbols: SymbolEntry[]): Promise<void>;
-  
+
   /**
    * Remove file from index
    */
   removeFile(uri: string): Promise<void>;
-  
+
   /**
    * Search symbols by name
    */
   search(query: string, options?: SearchOptions): Promise<SymbolEntry[]>;
-  
+
   /**
    * Get all symbols in a file
    */
   getFileSymbols(uri: string): SymbolEntry[];
-  
+
   /**
    * Get symbols by kind
    */
   getSymbolsByKind(kind: FHIRPathSymbolKind): SymbolEntry[];
-  
+
   /**
    * Get index statistics
    */
@@ -194,20 +194,20 @@ export interface IFuzzySearchService {
    * Perform fuzzy search on symbol names
    */
   search(
-    query: string, 
-    items: SymbolEntry[], 
+    query: string,
+    items: SymbolEntry[],
     options?: {
       threshold?: number;
       maxResults?: number;
       keys?: string[];
     }
   ): FuzzySearchResult[];
-  
+
   /**
    * Calculate similarity score between two strings
    */
   calculateScore(query: string, target: string): number;
-  
+
   /**
    * Get search suggestions based on query
    */

@@ -34,7 +34,7 @@ export interface FHIRPathSymbol {
   detail?: string;
   documentation?: string;
   children?: FHIRPathSymbol[];
-  
+
   // Additional FHIRPath-specific information
   fhirType?: string;
   fhirPath?: string;
@@ -54,7 +54,7 @@ export interface IDefinitionProvider {
   provideDefinition(
     document: TextDocument,
     position: Position
-  ): Location[] | LocationLink[] | null;
+  ): Location[] | LocationLink[] | null | Promise<Location[] | LocationLink[] | null>;
 }
 
 export interface IReferencesProvider {
@@ -62,7 +62,7 @@ export interface IReferencesProvider {
     document: TextDocument,
     position: Position,
     context: { includeDeclaration: boolean }
-  ): Location[] | null;
+  ): Location[] | null | Promise<Location[] | null>;
 }
 
 /**

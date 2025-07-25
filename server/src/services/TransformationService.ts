@@ -39,7 +39,7 @@ interface TransformationRule {
   name: string;
   description: string;
   pattern: RegExp;
-  replacement: string | ((match: RegExpMatchArray) => string);
+  replacement: string | ((substring: string, ...args: any[]) => string);
   validate?: (original: string, transformed: string) => boolean;
 }
 
@@ -193,7 +193,7 @@ export class TransformationService {
         replacement: '$1'
       },
       {
-        name: 'not-equals-false', 
+        name: 'not-equals-false',
         description: 'Simplify "X != false" to "X"',
         pattern: /^(.+?)\s*!=\s*false$/,
         replacement: '$1'
@@ -284,8 +284,7 @@ export class TransformationService {
         name: 'function-spacing',
         description: 'Normalize spacing in function calls',
         pattern: /(\w+)\s*\(\s*([^)]*)\s*\)/g,
-        replacement: (match: RegExpMatchArray) => {
-          const [, funcName, params] = match;
+        replacement: (match: string, funcName: string, params: string) => {
           return `${funcName}(${params.trim()})`;
         }
       },
@@ -314,14 +313,14 @@ export class TransformationService {
   }
 
   private canRemoveRedundancy(text: string): boolean {
-    return text.includes('where(true)') || 
-           text.includes('count() > 0') || 
+    return text.includes('where(true)') ||
+           text.includes('count() > 0') ||
            text.includes('count() = 0') ||
            /\.where\s*\([^)]+\)\s*\.where\s*\([^)]+\)/.test(text);
   }
 
   private canNormalizeSpacing(text: string): boolean {
-    return /\s*[=!<>]+\s*/.test(text) || 
+    return /\s*[=!<>]+\s*/.test(text) ||
            /\w+\s*\(\s*[^)]*\s*\)/.test(text) ||
            /\s*\.\s*/.test(text);
   }
@@ -332,16 +331,16 @@ export class TransformationService {
 
     for (const rule of this.booleanRules) {
       const before = result;
-      
+
       // Reset regex lastIndex to avoid state issues
       rule.pattern.lastIndex = 0;
-      
+
       if (typeof rule.replacement === 'string') {
         result = result.replace(rule.pattern, rule.replacement);
       } else {
         result = result.replace(rule.pattern, rule.replacement);
       }
-      
+
       if (result !== before) {
         appliedRules.push(rule.description);
       }
@@ -349,7 +348,7 @@ export class TransformationService {
 
     return {
       text: result.trim(),
-      description: appliedRules.length > 0 
+      description: appliedRules.length > 0
         ? `Applied: ${appliedRules.join(', ')}`
         : 'Simplified boolean expression'
     };
@@ -366,7 +365,7 @@ export class TransformationService {
       } else {
         result = result.replace(rule.pattern, rule.replacement);
       }
-      
+
       if (result !== before) {
         appliedRules.push(rule.description);
       }
@@ -374,7 +373,7 @@ export class TransformationService {
 
     return {
       text: result,
-      description: appliedRules.length > 0 
+      description: appliedRules.length > 0
         ? `Applied: ${appliedRules.join(', ')}`
         : 'Optimized path expression'
     };
@@ -403,7 +402,7 @@ export class TransformationService {
 
     return {
       text: result,
-      description: changes.length > 0 
+      description: changes.length > 0
         ? `Removed redundancy: ${changes.join(', ')}`
         : 'Removed redundant operations'
     };
@@ -438,7 +437,7 @@ export class TransformationService {
 
     return {
       text: result,
-      description: changes.length > 0 
+      description: changes.length > 0
         ? `Normalized: ${changes.join(', ')}`
         : 'Normalized spacing'
     };
@@ -459,11 +458,11 @@ export class TransformationService {
 
   private getTextInRange(text: string, range: Range): string {
     const lines = text.split('\n');
-    
+
     if (range.start.line === range.end.line) {
       return lines[range.start.line]?.substring(range.start.character, range.end.character) || '';
     }
-    
+
     let result = '';
     for (let i = range.start.line; i <= range.end.line; i++) {
       if (i < lines.length) {
@@ -476,7 +475,7 @@ export class TransformationService {
         }
       }
     }
-    
+
     return result;
   }
 }

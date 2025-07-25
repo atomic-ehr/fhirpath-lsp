@@ -40,16 +40,18 @@ export class FHIRValidationProvider {
     try {
       // Parse context from the document
       const context = await this.contextService.parseContext(document);
-      
+
       // Add context validation errors (but only critical ones that prevent analysis)
       if (!context.isValid) {
         // Filter to only show errors that prevent basic parsing and analysis
-        const criticalErrors = context.errors.filter(error => 
-          !error.includes('Input file not found') && 
+        // Also exclude "Unknown FHIR resource type" errors as they are already handled by directive validation
+        const criticalErrors = context.errors.filter(error =>
+          !error.includes('Input file not found') &&
           !error.includes('Failed to load context data') &&
-          !error.includes('No input data provided')
+          !error.includes('No input data provided') &&
+          !error.includes('Unknown FHIR resource type')
         );
-        
+
         criticalErrors.forEach(error => {
           diagnostics.push({
             severity: DiagnosticSeverity.Error,
@@ -81,16 +83,16 @@ export class FHIRValidationProvider {
 
       // Extract FHIRPath expressions (excluding context declarations)
       const expressions = this.contextService.extractFHIRPathExpressions(document);
-      
+
       // Validate each expression
       for (const expressionInfo of expressions) {
         let expressionDiagnostics: Diagnostic[] = [];
-        
+
         if (context.resourceType) {
           // Validate with resource type context (data may or may not be available)
           expressionDiagnostics = await this.validateExpressionWithContext(
-            expressionInfo.expression, 
-            context, 
+            expressionInfo.expression,
+            context,
             document,
             expressionInfo.line,
             expressionInfo.column,
@@ -105,10 +107,10 @@ export class FHIRValidationProvider {
             expressionInfo.column
           );
         }
-        
+
         diagnostics.push(...expressionDiagnostics);
       }
-      
+
     } catch (error) {
       console.warn('Failed to validate document:', error);
     }
@@ -127,7 +129,7 @@ export class FHIRValidationProvider {
     try {
       // Use context service for basic validation
       const validation = this.contextService.validateExpressionWithoutContext(expression);
-      
+
       // Add errors as diagnostics
       validation.errors.forEach(error => {
         diagnostics.push({
@@ -155,7 +157,7 @@ export class FHIRValidationProvider {
           code: 'syntax-warning'
         });
       });
-      
+
       // Also add basic FHIR pattern validation
       const fhirPatternValidation = this.validateFHIRPattern(expression);
       fhirPatternValidation.warnings.forEach(warning => {
@@ -180,7 +182,7 @@ export class FHIRValidationProvider {
             // error.column is relative to the individual expression, so we add the expression's start column
             const errorColumn = Math.max(0, column + (error.column || 0));
             const errorLength = Math.max(1, error.length || 1);
-            
+
             diagnostics.push({
               severity: DiagnosticSeverity.Error,
               range: {
@@ -196,11 +198,11 @@ export class FHIRValidationProvider {
       } catch (parseError) {
         // If parsing completely fails, add a general error
         const errorMessage = parseError instanceof Error ? parseError.message : 'Unknown parse error';
-        
+
         // Try to extract position information from the error message
         let errorColumn = column;
         let errorLength = expression.length;
-        
+
         // Look for position information in the error message
         const posMatch = errorMessage.match(/at position (\d+)/);
         if (posMatch) {
@@ -208,20 +210,20 @@ export class FHIRValidationProvider {
           errorColumn = column + pos;
           errorLength = 1;
         }
-        
+
         // Look for other position patterns
         const lineColMatch = errorMessage.match(/line (\d+), column (\d+)/);
         if (lineColMatch) {
           // If the error mentions line/column within the expression, adjust for document position
           const errorLine = parseInt(lineColMatch[1]) - 1; // Convert to 0-based
           const errorCol = parseInt(lineColMatch[2]) - 1; // Convert to 0-based
-          
+
           // For single-line expressions, error line should be 0, so we use the document line
           if (errorLine === 0) {
             errorColumn = column + errorCol;
           }
         }
-        
+
         diagnostics.push({
           severity: DiagnosticSeverity.Error,
           range: {
@@ -286,7 +288,7 @@ export class FHIRValidationProvider {
 
       // Parse the FHIRPath expression
       const parseResult = this.fhirPathService.parse(expression);
-      
+
       if (parseResult.success && parseResult.ast) {
         // If we have context data, try to evaluate the expression
         if (contextData) {
@@ -294,10 +296,10 @@ export class FHIRValidationProvider {
             // Use @atomic-ehr/fhirpath to evaluate the expression against the context data
             const { evaluate } = require('@atomic-ehr/fhirpath');
             const result = evaluate(expression, contextData);
-            
+
             // The fact that evaluation succeeded means the expression is valid for this context
             console.log(`Expression "${expression.substring(0, 50)}..." evaluated successfully, result:`, result);
-            
+
             // Add informational diagnostic showing the evaluation result
             if (result !== undefined && result !== null) {
               const resultStr = Array.isArray(result) ? `[${result.length} items]` : String(result);
@@ -312,11 +314,11 @@ export class FHIRValidationProvider {
                 code: 'evaluation-result'
               });
             }
-            
+
           } catch (evalError: any) {
             // Expression failed to evaluate against the context data
             console.warn(`Expression evaluation failed: ${evalError.message}`);
-            
+
             // Check if this is a property access error (common case)
             if (evalError.message.includes('undefined') || evalError.message.includes('property')) {
               diagnostics.push({
@@ -345,17 +347,17 @@ export class FHIRValidationProvider {
         } else {
           // No context data available - perform static analysis only
           console.log(`Performing static analysis for expression "${expression}" with resource type ${context.resourceType}`);
-          
+
           // Perform static validation without evaluation
           const pathAnalyses = this.analyzeFHIRPathsWithContext(parseResult.ast, context, document, line, column);
-          
+
           // Convert analyses to diagnostics
           pathAnalyses.forEach(analysis => {
             if (!analysis.isValid) {
               diagnostics.push(...this.createDiagnosticsFromAnalysis(analysis));
             }
           });
-          
+
           // Also check for basic FHIR pattern validation without requiring data
           const fhirPatternValidation = this.validateFHIRPattern(expression);
           if (!fhirPatternValidation.isValid) {
@@ -475,12 +477,12 @@ export class FHIRValidationProvider {
     if (sameResourceMatch) {
       // Extract the property after the resource type prefix
       const rootProperty = sameResourceMatch[1];
-      
+
       // Skip validation for function calls, operators, and literals
       if (['where', 'exists', 'first', 'last', 'count', 'empty', 'all', 'any', 'select', 'distinct', 'today', 'now'].includes(rootProperty)) {
         return null;
       }
-      
+
       // Validate the property
       if (!validProperties.includes(rootProperty)) {
         const belongsToResources = [];
@@ -496,7 +498,7 @@ export class FHIRValidationProvider {
           return `Property '${rootProperty}' does not exist on ${context.resourceType}.`;
         }
       }
-      
+
       return null; // Valid property with resource type prefix
     }
 
@@ -534,14 +536,14 @@ export class FHIRValidationProvider {
   }
 
   private analyzeFHIRPathsWithContext(
-    ast: any, 
-    context: any, 
+    ast: any,
+    context: any,
     document: TextDocument,
     baseLine: number,
     baseColumn: number
   ): PathAnalysis[] {
     const analyses: PathAnalysis[] = [];
-    
+
     const traverse = (node: any, currentPath: string = '') => {
       if (!node || !node.type) {
         return;
@@ -554,9 +556,9 @@ export class FHIRValidationProvider {
             // Check if this resource type matches the context
             if (context.resourceType && node.value !== context.resourceType) {
               const analysis = this.createContextMismatchAnalysis(
-                node, 
-                document, 
-                node.value, 
+                node,
+                document,
+                node.value,
                 context.resourceType
               );
               if (analysis) {
@@ -631,8 +633,8 @@ export class FHIRValidationProvider {
   }
 
   private analyzeMemberExpressionWithContext(
-    node: any, 
-    context: any, 
+    node: any,
+    context: any,
     document: TextDocument
   ): PathAnalysis | null {
     try {
@@ -643,10 +645,10 @@ export class FHIRValidationProvider {
       }
 
       const { resourceType, propertyPath, fullPath } = pathInfo;
-      
+
       // Use context resource type if available
       const contextResourceType = context.resourceType || resourceType;
-      
+
       // Get position information
       const position = this.getNodeRange(node, document);
       if (!position) {
@@ -655,7 +657,7 @@ export class FHIRValidationProvider {
 
       // Validate the path with context
       const validation = this.fhirResourceService.validatePropertyPath(
-        contextResourceType, 
+        contextResourceType,
         propertyPath
       );
 
@@ -676,7 +678,7 @@ export class FHIRValidationProvider {
 
   private analyzeFHIRPaths(ast: any, document: TextDocument): PathAnalysis[] {
     const analyses: PathAnalysis[] = [];
-    
+
     const traverse = (node: any, currentPath: string = '') => {
       if (!node || !node.type) {
         return;
@@ -739,7 +741,7 @@ export class FHIRValidationProvider {
       }
 
       const { resourceType, propertyPath, fullPath } = pathInfo;
-      
+
       // Get position information
       const position = this.getNodeRange(node, document);
       if (!position) {
@@ -838,7 +840,7 @@ export class FHIRValidationProvider {
         const length = node.value?.length || node.name?.length || 1;
         const endOffset = (node.position.offset || 0) + length;
         const endPos = document.positionAt(Math.min(endOffset, document.getText().length));
-        
+
         return {
           start: startPos,
           end: endPos
@@ -854,7 +856,7 @@ export class FHIRValidationProvider {
       try {
         const startPos = document.positionAt(node.location.start.offset || 0);
         const endPos = document.positionAt(node.location.end.offset || (node.location.start.offset || 0) + 1);
-        
+
         return {
           start: startPos,
           end: endPos
@@ -902,10 +904,10 @@ export class FHIRValidationProvider {
   private getSimilarResourceTypes(input: string): string[] {
     const allTypes = this.fhirResourceService.getAllResourceTypes();
     const inputLower = input.toLowerCase();
-    
+
     return allTypes.filter(type => {
       const typeLower = type.toLowerCase();
-      return typeLower.includes(inputLower) || 
+      return typeLower.includes(inputLower) ||
              inputLower.includes(typeLower) ||
              this.calculateLevenshteinDistance(inputLower, typeLower) <= 2;
     }).slice(0, 5); // Limit to 5 suggestions
@@ -948,7 +950,7 @@ export class FHIRValidationProvider {
     const suggestions: string[] = [];
 
     // Check for common FHIR validation patterns
-    
+
     // 1. Check for invalid choice type usage
     if (expression.includes('.value') && !expression.includes('.value.as(')) {
       const match = expression.match(/(\w+)\.value(?!\s*\.as\()/);
@@ -972,7 +974,7 @@ export class FHIRValidationProvider {
       suggestions.push(`For filtering, use: [${arrayMatch[1]} = "value"]`);
       suggestions.push(`For indexing, use: [0] or [index]`);
     }
-    
+
     // 4. Add informational warnings for expressions without context
     if (expression.match(/^[a-zA-Z][\w.]*$/)) {
       warnings.push('This expression will be evaluated against the configured resource context when input data is available.');

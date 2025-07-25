@@ -29,7 +29,7 @@ export class CodeActionProvider implements ICodeActionProvider {
   private functionRegistry: FHIRPathFunctionRegistry;
 
   constructor(
-    connection: Connection, 
+    connection: Connection,
     fhirPathService: FHIRPathService,
     functionRegistry: FHIRPathFunctionRegistry
   ) {
@@ -48,7 +48,7 @@ export class CodeActionProvider implements ICodeActionProvider {
         this.registrations.set(kind, []);
       }
       this.registrations.get(kind)!.push(registration);
-      
+
       // Sort by priority (highest first)
       this.registrations.get(kind)!.sort((a, b) => b.priority - a.priority);
     }
@@ -83,7 +83,7 @@ export class CodeActionProvider implements ICodeActionProvider {
   ): Promise<CodeAction[]> {
     try {
       this.connection.console.log(`Code actions requested for ${document.uri}, range: ${JSON.stringify(range)}, diagnostics: ${context.diagnostics?.length || 0}`);
-      
+
       const enhancedContext = await this.enhanceContext(document, range, context);
       const actions: FHIRPathCodeAction[] = [];
 
@@ -97,7 +97,7 @@ export class CodeActionProvider implements ICodeActionProvider {
       // Collect actions from all registered providers
       for (const requestedKind of requestedKinds) {
         const providersForKind = this.getProvidersForKind(requestedKind);
-        
+
         for (const registration of providersForKind) {
           try {
             const providerActions = await registration.provider.provideCodeActions(
@@ -105,11 +105,11 @@ export class CodeActionProvider implements ICodeActionProvider {
               range,
               enhancedContext
             );
-            
+
             if (Array.isArray(providerActions)) {
               actions.push(...providerActions.map(action => ({
                 ...action,
-                priority: action.priority ?? registration.priority,
+                priority: (action as FHIRPathCodeAction).priority ?? registration.priority,
               }) as FHIRPathCodeAction));
             }
           } catch (error) {
@@ -159,16 +159,16 @@ export class CodeActionProvider implements ICodeActionProvider {
    */
   getSupportedKinds(): string[] {
     const kinds = Array.from(this.registrations.keys());
-    
+
     // Add base kinds that VS Code expects
     const baseKinds = [
       FHIRPathCodeActionKind.QuickFix,
-      FHIRPathCodeActionKind.Refactor, 
+      FHIRPathCodeActionKind.Refactor,
       FHIRPathCodeActionKind.Source
     ];
-    
+
     const allKinds = [...new Set([...baseKinds, ...kinds])];
-    
+
     this.connection.console.log(`Supported code action kinds: ${allKinds.join(', ')}`);
     return allKinds;
   }
@@ -178,7 +178,7 @@ export class CodeActionProvider implements ICodeActionProvider {
    */
   private getProvidersForKind(kind: string): CodeActionRegistration[] {
     const providers: CodeActionRegistration[] = [];
-    
+
     // Get exact matches
     const exactMatch = this.registrations.get(kind);
     if (exactMatch) {
@@ -262,18 +262,18 @@ export class CodeActionProvider implements ICodeActionProvider {
   ): FHIRPathCodeAction[] {
     // Filter out actions that don't apply to the diagnostics
     let filteredActions = actions;
-    
+
     if (context.diagnostics && context.diagnostics.length > 0) {
       const diagnosticCodes = new Set(
         context.diagnostics.map(d => d.code?.toString())
       );
-      
+
       filteredActions = actions.filter(action => {
         if (!action.diagnostics || action.diagnostics.length === 0) {
           return true; // Source actions without specific diagnostics
         }
-        
-        return action.diagnostics.some(d => 
+
+        return action.diagnostics.some(d =>
           diagnosticCodes.has(d.code?.toString() || '')
         );
       });
@@ -309,9 +309,9 @@ export class CodeActionProvider implements ICodeActionProvider {
     try {
       // Register quick fix providers
       const quickFixProviders = createQuickFixProviders(this.functionRegistry);
-      
+
       this.connection.console.log(`Creating ${quickFixProviders.length} quick fix providers`);
-      
+
       for (const registration of quickFixProviders) {
         this.connection.console.log(`Registering provider with kinds: ${registration.kinds.join(', ')}`);
         this.register(registration);
@@ -319,14 +319,14 @@ export class CodeActionProvider implements ICodeActionProvider {
 
       // Register source action providers
       const sourceActionProviders = createSourceActionProviders(this.connection, this.fhirPathService);
-      
+
       this.connection.console.log(`Creating ${sourceActionProviders.length} source action providers`);
-      
+
       for (const registration of sourceActionProviders) {
         this.connection.console.log(`Registering source provider with kinds: ${registration.kinds.join(', ')}`);
         this.register(registration);
       }
-      
+
       const supportedKinds = this.getSupportedKinds();
       this.connection.console.log(`Code action provider initialized with ${quickFixProviders.length + sourceActionProviders.length} providers (${quickFixProviders.length} quick fix + ${sourceActionProviders.length} source actions)`);
       this.connection.console.log(`Supported kinds: ${supportedKinds.join(', ')}`);

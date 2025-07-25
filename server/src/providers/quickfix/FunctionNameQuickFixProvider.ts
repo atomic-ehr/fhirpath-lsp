@@ -30,8 +30,8 @@ export class FunctionNameQuickFixProvider implements ICodeActionProvider {
    * Check if this provider can fix the given diagnostic
    */
   canFix(diagnostic: Diagnostic): boolean {
-    return diagnostic.code === 'E007' || 
-           (typeof diagnostic.code === 'object' && diagnostic.code.value === 'E007');
+    return diagnostic.code === 'E007' ||
+           (typeof diagnostic.code === 'object' && diagnostic.code !== null && 'value' in diagnostic.code && (diagnostic.code as any).value === 'E007');
   }
 
   /**
@@ -46,7 +46,7 @@ export class FunctionNameQuickFixProvider implements ICodeActionProvider {
 
     // Only process diagnostics that we can fix
     const relevantDiagnostics = (context.diagnostics || []).filter(d => this.canFix(d));
-    
+
     if (relevantDiagnostics.length === 0) {
       return actions;
     }
@@ -71,7 +71,7 @@ export class FunctionNameQuickFixProvider implements ICodeActionProvider {
     try {
       // Extract the unknown function name from the diagnostic range
       const unknownFunction = this.extractFunctionName(document, diagnostic.range);
-      
+
       if (!unknownFunction) {
         return actions;
       }
@@ -165,34 +165,34 @@ export class FunctionNameQuickFixProvider implements ICodeActionProvider {
   private extractFunctionName(document: TextDocument, range: Range): string | null {
     try {
       const text = document.getText(range);
-      
+
       // Handle different patterns:
       // 1. Simple function name: "whre"
       // 2. Function call: "whre("
       // 3. Chained function: ".whre"
-      
+
       // Remove common prefixes/suffixes
       let functionName = text.trim();
-      
+
       // Remove leading dot (for chained functions)
       if (functionName.startsWith('.')) {
         functionName = functionName.substring(1);
       }
-      
+
       // Remove opening parenthesis (for function calls)
       if (functionName.endsWith('(')) {
         functionName = functionName.substring(0, functionName.length - 1);
       }
-      
+
       // Extract just the function name (handle cases like "Patient.whre")
       const parts = functionName.split('.');
       functionName = parts[parts.length - 1];
-      
+
       // Validate it looks like a function name
       if (/^[a-zA-Z][a-zA-Z0-9_]*$/.test(functionName)) {
         return functionName;
       }
-      
+
       return null;
     } catch (error) {
       console.error('Error extracting function name:', error);
@@ -208,22 +208,22 @@ export class FunctionNameQuickFixProvider implements ICodeActionProvider {
       original.toLowerCase(),
       suggestion.toLowerCase()
     );
-    
+
     const maxLength = Math.max(original.length, suggestion.length);
-    
+
     // Confidence decreases with edit distance relative to string length
     const confidence = Math.max(0, 1 - (editDistance / maxLength));
-    
+
     // Boost confidence for exact case-insensitive matches
     if (original.toLowerCase() === suggestion.toLowerCase()) {
       return 1.0;
     }
-    
+
     // Boost confidence for common typos
     if (this.isCommonTypo(original, suggestion)) {
       return Math.min(1.0, confidence + 0.2);
     }
-    
+
     return confidence;
   }
 
@@ -244,11 +244,11 @@ export class FunctionNameQuickFixProvider implements ICodeActionProvider {
       ['replac', 'replace'],
       ['substrin', 'substring'],
     ];
-    
+
     const originalLower = original.toLowerCase();
     const suggestionLower = suggestion.toLowerCase();
-    
-    return common_typos.some(([typo, correct]) => 
+
+    return common_typos.some(([typo, correct]) =>
       originalLower === typo && suggestionLower === correct
     );
   }

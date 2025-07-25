@@ -1,4 +1,0 @@
-// @resource Patient
-// Simple test with semicolons
-
-name.exists(); active = true; birthDate.exists()

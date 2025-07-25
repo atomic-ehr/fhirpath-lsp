@@ -117,6 +117,25 @@ export class DiagnosticBuilder {
   }
 
   /**
+   * Set the range (location) of the diagnostic
+   */
+  withRange(range: Range): DiagnosticBuilder {
+    this.diagnostic.span = {
+      start: { line: range.start.line, column: range.start.character },
+      end: { line: range.end.line, column: range.end.character }
+    };
+    return this;
+  }
+
+  /**
+   * Set the severity of the diagnostic
+   */
+  withSeverity(severity: 'error' | 'warning' | 'info' | 'hint'): DiagnosticBuilder {
+    this.diagnostic.severity = severity;
+    return this;
+  }
+
+  /**
    * Set the source text for context
    */
   withSourceText(sourceText: string): DiagnosticBuilder {

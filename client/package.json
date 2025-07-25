@@ -138,7 +138,7 @@
           "type": "string",
           "enum": [
             "low",
-            "normal", 
+            "normal",
             "high",
             "highest"
           ],
@@ -241,11 +241,6 @@
         },
         "editor.codeActionsOnSaveTimeout": 3000,
         "editor.lightBulb.enabled": true,
-        "github.copilot.enable": false,
-        "github.copilot.inlineSuggest.enable": false,
-        "copilot.enable": false,
-        "editor.inlineSuggest.enabled": false,
-        "editor.suggest.filterGraceful": false,
         "editor.suggest.priority": "bottom",
         "fhirpath.codeActions.priority": "highest"
       }

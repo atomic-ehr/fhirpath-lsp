@@ -14,8 +14,7 @@ import { CodeActionService } from '../services/CodeActionService';
 import {
   DiagnosticBuilder,
   DiagnosticCode,
-  DiagnosticUtils,
-  EnhancedDiagnostic
+  DiagnosticUtils
 } from '../diagnostics/DiagnosticBuilder';
 
 // Enhanced diagnostics
@@ -24,7 +23,8 @@ import {
   DEFAULT_ENHANCED_DIAGNOSTIC_CONFIG,
   DiagnosticContext,
   DiagnosticAnalysisResult,
-  EnhancedDiagnosticCategory
+  EnhancedDiagnosticCategory,
+  EnhancedDiagnostic
 } from '../diagnostics/EnhancedDiagnosticTypes';
 import { PerformanceAnalyzer } from '../diagnostics/PerformanceAnalyzer';
 import { CodeQualityAnalyzer } from '../diagnostics/CodeQualityAnalyzer';
@@ -39,7 +39,7 @@ export class DiagnosticProvider {
   private readonly debounceTime = 300; // ms to debounce validation
   private validationTimeouts = new Map<string, NodeJS.Timeout>();
   private functionRegistry: FHIRPathFunctionRegistry;
-  
+
   // Enhanced diagnostic analyzers
   private performanceAnalyzer: PerformanceAnalyzer;
   private codeQualityAnalyzer: CodeQualityAnalyzer;
@@ -53,13 +53,13 @@ export class DiagnosticProvider {
     enhancedConfig?: Partial<EnhancedDiagnosticConfig>
   ) {
     this.functionRegistry = new FHIRPathFunctionRegistry();
-    
+
     // Initialize enhanced diagnostic configuration
     this.enhancedDiagnosticConfig = {
       ...DEFAULT_ENHANCED_DIAGNOSTIC_CONFIG,
       ...enhancedConfig
     };
-    
+
     // Initialize enhanced diagnostic analyzers
     this.performanceAnalyzer = new PerformanceAnalyzer();
     this.codeQualityAnalyzer = new CodeQualityAnalyzer();
@@ -73,7 +73,7 @@ export class DiagnosticProvider {
     const diagnostics: Diagnostic[] = [];
     const text = document.getText();
     const lines = text.split('\n');
-    
+
     const directiveOccurrences: {
       inputfile: Array<{ line: number; position: Position; value?: string; valuePosition?: Position }>;
       input: Array<{ line: number; position: Position; value?: string; valuePosition?: Position }>;
@@ -88,7 +88,7 @@ export class DiagnosticProvider {
     for (let lineNumber = 0; lineNumber < lines.length; lineNumber++) {
       const line = lines[lineNumber];
       const trimmed = line.trim();
-      
+
       if (trimmed.startsWith('//')) {
         const directiveMatch = trimmed.match(/\/\/\s*@(inputfile|input|resource)(\s+(.+))?$/);
         if (directiveMatch) {
@@ -99,7 +99,7 @@ export class DiagnosticProvider {
             line: lineNumber,
             character: atIndex
           };
-          
+
           let valuePosition: Position | undefined;
           if (value) {
             const valueStartIndex = line.indexOf(value, atIndex);
@@ -108,7 +108,7 @@ export class DiagnosticProvider {
               character: valueStartIndex
             };
           }
-          
+
           directiveOccurrences[directiveType].push({
             line: lineNumber,
             position,
@@ -166,7 +166,7 @@ export class DiagnosticProvider {
       // Find which type appears last
       const lastInputfile = directiveOccurrences.inputfile[directiveOccurrences.inputfile.length - 1];
       const lastInput = directiveOccurrences.input[directiveOccurrences.input.length - 1];
-      
+
       if (lastInputfile.line > lastInput.line) {
         // inputfile appears last, mark input directives as warnings
         for (const occurrence of directiveOccurrences.input) {
@@ -319,7 +319,7 @@ export class DiagnosticProvider {
   private validateInputDirectiveValue(value: string, valuePosition: Position, diagnostics: Diagnostic[]): void {
     try {
       const parsedData = JSON.parse(value);
-      
+
       // Check if it's a valid FHIR resource
       if (typeof parsedData === 'object' && parsedData !== null) {
         if (!parsedData.resourceType) {
@@ -426,15 +426,15 @@ export class DiagnosticProvider {
           // For successful parses, run semantic validation
           const semanticDiagnostics = await this.validateSemantics(document, parseResult);
           diagnostics.push(...semanticDiagnostics);
-          
+
           // Also run custom function validation
           const functionDiagnostics = this.validateFunctions(document, text);
           diagnostics.push(...functionDiagnostics);
-          
+
           // Run additional syntax validations
           const syntaxDiagnostics = this.validateSyntax(document, text);
           diagnostics.push(...syntaxDiagnostics);
-          
+
           // Run enhanced diagnostics
           const resourceType = this.extractResourceTypeFromExpression(text);
           const enhancedDiagnostics = this.runEnhancedDiagnostics(text, 0, document, resourceType);
@@ -453,16 +453,16 @@ export class DiagnosticProvider {
               // For successful parses, run semantic validation
               const semanticDiagnostics = await this.validateSemanticsForExpression(document, parseResult, expr);
               diagnostics.push(...semanticDiagnostics);
-              
+
               // Also run custom function validation for this expression
               const exprText = expr.expression;
               const functionDiagnostics = this.validateFunctions(document, exprText, expr.line, expr.column);
               diagnostics.push(...functionDiagnostics);
-              
+
               // Run additional syntax validations for this expression
               const syntaxDiagnostics = this.validateSyntax(document, exprText, expr.line, expr.column);
               diagnostics.push(...syntaxDiagnostics);
-              
+
               // Run enhanced diagnostics for this expression
               const resourceType = this.extractResourceTypeFromExpression(exprText);
               const enhancedDiagnostics = this.runEnhancedDiagnostics(exprText, expr.line, document, resourceType);
@@ -560,34 +560,34 @@ export class DiagnosticProvider {
    * Validate function calls in the expression
    */
   private validateFunctions(
-    document: TextDocument, 
-    expression: string, 
-    lineOffset: number = 0, 
+    document: TextDocument,
+    expression: string,
+    lineOffset: number = 0,
     columnOffset: number = 0
   ): Diagnostic[] {
     const diagnostics: Diagnostic[] = [];
-    
+
     try {
       // Get all known functions from the registry
       const knownFunctions = this.functionRegistry.getFunctions();
       const knownFunctionNames = new Set(knownFunctions.map(f => f.name));
-      
+
       // Get all operators and keywords from registry
       const knownOperators = new Set(this.functionRegistry.getOperators().map(op => op.name).filter(name => name));
       const knownKeywords = new Set(this.functionRegistry.getKeywords().map(kw => kw.keyword));
-      
+
       // Combine all known function/operator/keyword names from registry
       const allKnownNames = new Set([...knownFunctionNames, ...knownOperators, ...knownKeywords]);
-      
+
       // Pattern to match potential function calls: word followed by optional parentheses
       const functionPattern = /\b([a-zA-Z][a-zA-Z0-9_]*)\s*(?=\()/g;
       let match;
-      
+
       while ((match = functionPattern.exec(expression)) !== null) {
         const functionName = match[1];
         const startPos = match.index;
         const endPos = match.index + functionName.length;
-        
+
         // Check if this is an unknown function
         if (!allKnownNames.has(functionName)) {
           // Calculate the exact position within the expression
@@ -595,33 +595,33 @@ export class DiagnosticProvider {
           const beforeMatch = expression.substring(0, startPos);
           const newlineCount = (beforeMatch.match(/\n/g) || []).length;
           const lastNewlineIndex = beforeMatch.lastIndexOf('\n');
-          
+
           // Calculate line and column positions
           const diagnosticLine = lineOffset + newlineCount;
           const columnInExpression = lastNewlineIndex === -1 ? startPos : startPos - lastNewlineIndex - 1;
           const startColumn = (newlineCount === 0 ? columnOffset : 0) + columnInExpression;
           const endColumn = startColumn + functionName.length;
-          
+
           const range = Range.create(
             Position.create(diagnosticLine, startColumn),
             Position.create(diagnosticLine, endColumn)
           );
-          
+
           // Get suggestions for this unknown function
           const suggestions = this.getFunctionSuggestions(functionName);
-          
+
           // Create diagnostic with enhanced builder
           const diagnostic = DiagnosticBuilder.error(DiagnosticCode.UnknownFunction)
             .withMessage(`Unknown function '${functionName}'`)
             .withRange(range)
             .withSourceText(expression)
             .withSeverity(DiagnosticSeverity.Error);
-          
+
           // Add suggestions if we found any
           if (suggestions.length > 0) {
             const topSuggestion = suggestions[0];
             diagnostic.withMessage(`Unknown function '${functionName}'. Did you mean '${topSuggestion}'?`);
-            
+
             // Add all suggestions as quick fix options
             suggestions.forEach((suggestion, index) => {
               if (index === 0) {
@@ -633,58 +633,58 @@ export class DiagnosticProvider {
           } else {
             diagnostic.withMessage(`Unknown function '${functionName}'. Check FHIRPath documentation for available functions.`);
           }
-          
+
           diagnostics.push(diagnostic.build());
         }
       }
-      
+
       // Also check for potential typos in property access (simpler pattern)
       const propertyPattern = /\.([a-zA-Z][a-zA-Z0-9_]*)/g;
       match = null;
-      
+
       while ((match = propertyPattern.exec(expression)) !== null) {
         const propertyName = match[1];
-        
+
         // Skip if this is a known function name (already checked above)
         if (allKnownNames.has(propertyName)) {
           continue;
         }
-        
+
         // Check for common FHIR property typos
         const commonProperties = ['name', 'given', 'family', 'use', 'value', 'code', 'system', 'display',
                                  'active', 'gender', 'birthDate', 'address', 'telecom', 'identifier'];
-        
+
         const propertySuggestions = this.getPropertySuggestions(propertyName);
-        
+
         // Only create diagnostics for likely typos (edit distance <= 2)
         if (propertySuggestions.length > 0) {
           const startPos = match.index + 1; // +1 to skip the dot
           const endPos = startPos + propertyName.length;
-          
+
           const lineNumber = lineOffset;
           const startColumn = columnOffset + startPos;
           const endColumn = columnOffset + endPos;
-          
+
           const range = Range.create(
             Position.create(lineNumber, startColumn),
             Position.create(lineNumber, endColumn)
           );
-          
+
           const diagnostic = DiagnosticBuilder.warning(DiagnosticCode.UnknownProperty)
             .withMessage(`Unknown property '${propertyName}'`)
             .withRange(range)
             .withSourceText(expression)
             .suggest(`Did you mean '${propertySuggestions[0]}'?`, propertySuggestions[0])
-            .build();
-          
+            .buildDiagnostic();
+
           diagnostics.push(diagnostic);
         }
       }
-      
+
     } catch (error) {
       console.error('Error in function validation:', error);
     }
-    
+
     return diagnostics;
   }
 
@@ -698,7 +698,7 @@ export class DiagnosticProvider {
     columnOffset: number = 0
   ): Diagnostic[] {
     const diagnostics: Diagnostic[] = [];
-    
+
     try {
       // Check for unterminated strings
       const stringIssues = this.findStringIssues(expression);
@@ -707,16 +707,16 @@ export class DiagnosticProvider {
           Position.create(lineOffset, columnOffset + issue.start),
           Position.create(lineOffset, columnOffset + issue.end)
         );
-        
+
         const diagnostic = DiagnosticBuilder.error(DiagnosticCode.UnterminatedString)
           .withMessage(issue.message)
           .withRange(range)
           .withSourceText(expression)
           .build();
-        
+
         diagnostics.push(diagnostic);
       }
-      
+
       // Check for bracket mismatches
       const bracketIssues = this.findBracketIssues(expression);
       for (const issue of bracketIssues) {
@@ -724,16 +724,16 @@ export class DiagnosticProvider {
           Position.create(lineOffset, columnOffset + issue.start),
           Position.create(lineOffset, columnOffset + issue.end)
         );
-        
+
         const diagnostic = DiagnosticBuilder.error(DiagnosticCode.SyntaxError)
           .withMessage(issue.message)
           .withRange(range)
           .withSourceText(expression)
           .build();
-        
+
         diagnostics.push(diagnostic);
       }
-      
+
       // Check for missing operators (simple patterns)
       const operatorIssues = this.findOperatorIssues(expression);
       for (const issue of operatorIssues) {
@@ -741,20 +741,20 @@ export class DiagnosticProvider {
           Position.create(lineOffset, columnOffset + issue.start),
           Position.create(lineOffset, columnOffset + issue.end)
         );
-        
+
         const diagnostic = DiagnosticBuilder.warning(DiagnosticCode.InvalidOperator)
           .withMessage(issue.message)
           .withRange(range)
           .withSourceText(expression)
           .build();
-        
+
         diagnostics.push(diagnostic);
       }
-      
+
     } catch (error) {
       console.error('Error in syntax validation:', error);
     }
-    
+
     return diagnostics;
   }
 
@@ -763,13 +763,13 @@ export class DiagnosticProvider {
    */
   private findStringIssues(expression: string): Array<{start: number, end: number, message: string}> {
     const issues: Array<{start: number, end: number, message: string}> = [];
-    
+
     // Look for unterminated strings
     const patterns = [
       { regex: /'[^']*$/, message: "Unterminated string (missing closing single quote)" },
       { regex: /"[^"]*$/, message: "Unterminated string (missing closing double quote)" }
     ];
-    
+
     for (const pattern of patterns) {
       const match = expression.match(pattern.regex);
       if (match && match.index !== undefined) {
@@ -780,7 +780,7 @@ export class DiagnosticProvider {
         });
       }
     }
-    
+
     return issues;
   }
 
@@ -789,16 +789,16 @@ export class DiagnosticProvider {
    */
   private findBracketIssues(expression: string): Array<{start: number, end: number, message: string}> {
     const issues: Array<{start: number, end: number, message: string}> = [];
-    
+
     // Simple bracket balance check
     let parenCount = 0;
     let squareCount = 0;
     let inString = false;
     let stringChar = '';
-    
+
     for (let i = 0; i < expression.length; i++) {
       const char = expression[i];
-      
+
       // Handle string state
       if ((char === '"' || char === "'") && (i === 0 || expression[i-1] !== '\\')) {
         if (!inString) {
@@ -810,15 +810,15 @@ export class DiagnosticProvider {
         }
         continue;
       }
-      
+
       if (inString) continue;
-      
+
       // Count brackets
       if (char === '(') parenCount++;
       else if (char === ')') parenCount--;
       else if (char === '[') squareCount++;
       else if (char === ']') squareCount--;
-      
+
       // Check for immediate issues
       if (parenCount < 0) {
         issues.push({
@@ -828,7 +828,7 @@ export class DiagnosticProvider {
         });
         parenCount = 0; // Reset to avoid cascading errors
       }
-      
+
       if (squareCount < 0) {
         issues.push({
           start: i,
@@ -838,7 +838,7 @@ export class DiagnosticProvider {
         squareCount = 0; // Reset to avoid cascading errors
       }
     }
-    
+
     // Check for unclosed brackets at the end
     if (parenCount > 0) {
       issues.push({
@@ -847,7 +847,7 @@ export class DiagnosticProvider {
         message: `Missing ${parenCount} closing parenthesis${parenCount > 1 ? 'es' : ''} ')'`
       });
     }
-    
+
     if (squareCount > 0) {
       issues.push({
         start: expression.length - 1,
@@ -855,7 +855,7 @@ export class DiagnosticProvider {
         message: `Missing ${squareCount} closing bracket${squareCount > 1 ? 's' : ''} ']'`
       });
     }
-    
+
     return issues;
   }
 
@@ -864,20 +864,20 @@ export class DiagnosticProvider {
    */
   private findOperatorIssues(expression: string): Array<{start: number, end: number, message: string}> {
     const issues: Array<{start: number, end: number, message: string}> = [];
-    
+
     // Look for patterns that might be missing operators
     // Pattern: identifier followed by literal without operator
     const missingOpPattern = /\b([a-zA-Z][a-zA-Z0-9_]*)\s+(true|false|\d+|'[^']*'|"[^"]*")/g;
     let match;
-    
+
     while ((match = missingOpPattern.exec(expression)) !== null) {
       const identifier = match[1];
       const literal = match[2];
       const identifierEnd = match.index + identifier.length;
-      
+
       // Find the start of the literal to position the diagnostic correctly
       const literalStart = match.index + match[0].length - literal.length;
-      
+
       // Position the diagnostic in the whitespace between identifier and literal
       // This is where the missing operator should be inserted
       issues.push({
@@ -886,7 +886,7 @@ export class DiagnosticProvider {
         message: `Missing operator before '${literal}' (did you mean '= ${literal}'?)`
       });
     }
-    
+
     return issues;
   }
 
@@ -973,15 +973,15 @@ export class DiagnosticProvider {
     const allFunctions = this.functionRegistry.getFunctions();
     const allOperators = this.functionRegistry.getOperators();
     const allKeywords = this.functionRegistry.getKeywords();
-    
+
     // Create a comprehensive list of all available names
     const functionNames = allFunctions.map(f => f.name);
     const operatorNames = allOperators.map(op => op.name).filter(name => name); // Some operators might not have names
     const keywordNames = allKeywords.map(kw => kw.keyword);
-    
+
     // Combine all available names from the registry
     const allAvailableNames = [...functionNames, ...operatorNames, ...keywordNames];
-    
+
     // Use CodeActionService to find similar strings with edit distance
     return CodeActionService.findSimilarStrings(
       errorText,
@@ -999,20 +999,20 @@ export class DiagnosticProvider {
     // This includes functions that can be used in property access context
     const allFunctions = this.functionRegistry.getFunctions();
     const allKeywords = this.functionRegistry.getKeywords();
-    
+
     // Create a comprehensive list of common FHIR properties and registry items
     const commonProperties = [
       'name', 'given', 'family', 'use', 'value', 'code', 'system', 'display',
       'active', 'gender', 'birthDate', 'address', 'telecom', 'identifier',
       'status', 'category', 'subject', 'effective', 'issued', 'performer'
     ];
-    
+
     const functionNames = allFunctions.map(f => f.name);
     const keywordNames = allKeywords.map(kw => kw.keyword);
-    
+
     // Combine properties with registry items for comprehensive suggestions
     const allPropertyCandidates = [...commonProperties, ...functionNames, ...keywordNames];
-    
+
     // Use CodeActionService to find similar strings
     return CodeActionService.findSimilarStrings(
       errorText,
@@ -1022,7 +1022,7 @@ export class DiagnosticProvider {
     );
   }
 
-  
+
 
   /**
    * Perform semantic validation on a successfully parsed expression
@@ -1524,19 +1524,19 @@ export class DiagnosticProvider {
     // Match patterns like "Patient.name" or "Bundle.entry.resource.ofType(Patient)"
     const resourceTypePattern = /^([A-Z][a-zA-Z0-9]*)\./;
     const match = expression.match(resourceTypePattern);
-    
+
     if (match) {
       return match[1];
     }
-    
+
     // Check for ofType() patterns
     const ofTypePattern = /\.ofType\s*\(\s*([A-Z][a-zA-Z0-9]*)\s*\)/;
     const ofTypeMatch = expression.match(ofTypePattern);
-    
+
     if (ofTypeMatch) {
       return ofTypeMatch[1];
     }
-    
+
     return undefined;
   }
 

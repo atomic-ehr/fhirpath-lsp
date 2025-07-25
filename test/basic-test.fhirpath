@@ -1,6 +1,4 @@
 // @inputfile patient-example.json
-// @input {"resourceType": "Patient", "id": "example", "active": true, "name": [{"family": "Doe", "given": ["John"]}]}
-// @resource  Test
 //
 //
 Patient.name.where(true).where(family = "Doe")
