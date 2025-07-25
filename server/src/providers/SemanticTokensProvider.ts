@@ -8,6 +8,7 @@ import {
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { FHIRPathService } from '../parser/FHIRPathService';
 import { cacheService } from '../services/CacheService';
+import { FHIRPathFunctionRegistry } from '../services/FHIRPathFunctionRegistry';
 
 // Token types - must match the order in server.ts
 export enum TokenType {
@@ -42,7 +43,11 @@ export interface SemanticToken {
 }
 
 export class SemanticTokensProvider {
-  constructor(private fhirPathService: FHIRPathService) {}
+  private functionRegistry: FHIRPathFunctionRegistry;
+  
+  constructor(private fhirPathService: FHIRPathService) {
+    this.functionRegistry = new FHIRPathFunctionRegistry();
+  }
 
   async provideSemanticTokens(
     document: TextDocument,
@@ -222,6 +227,27 @@ export class SemanticTokensProvider {
   private extractTokensWithRegex(lineText: string, lineNumber: number): SemanticToken[] {
     const tokens: SemanticToken[] = [];
 
+    // Get operators and keywords from Registry API
+    const operators = this.functionRegistry.getOperators();
+    const keywords = this.functionRegistry.getKeywords();
+    
+    // Build dynamic regex patterns
+    const wordOperatorsList = operators
+      .filter(op => /^[a-zA-Z]+$/.test(op.symbol))
+      .map(op => op.symbol);
+    
+    const symbolOperatorsList = operators
+      .filter(op => !/^[a-zA-Z]+$/.test(op.symbol))
+      .map(op => op.symbol.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')) // Escape regex chars
+      .sort((a, b) => b.length - a.length); // Sort by length to match longer operators first
+    
+    const keywordsList = keywords.map(kw => kw.keyword);
+    
+    // Create regex strings
+    const wordOperators = wordOperatorsList.length > 0 ? wordOperatorsList.join('|') : '';
+    const symbolOperators = symbolOperatorsList.length > 0 ? symbolOperatorsList.join('|') : '';
+    const keywordList = keywordsList.length > 0 ? keywordsList.join('|') : '';
+
     // Define regex patterns for different token types
     const patterns = [
       // Functions (word followed by opening parenthesis)
@@ -260,15 +286,21 @@ export class SemanticTokensProvider {
         type: TokenType.BOOLEAN,
         modifiers: 0
       },
-      // Keywords and operators (word-based)
+      // Keywords (boolean literals and reserved words)
       {
-        regex: /\b(where|select|exists|all|empty|first|last|and|or|xor|implies|as|is|in|contains)\b/g,
+        regex: keywordList ? new RegExp(`\\b(${keywordList})\\b`, 'g') : /\b(true|false|null)\b/g,
         type: TokenType.KEYWORD,
         modifiers: 0
       },
-      // Operators (symbols)
+      // Word-based operators
       {
-        regex: /(<=|>=|!=|<|>|=)/g,
+        regex: wordOperators ? new RegExp(`\\b(${wordOperators})\\b`, 'g') : /\b(and|or|xor|implies)\b/g,
+        type: TokenType.OPERATOR,
+        modifiers: 0
+      },
+      // Symbol operators
+      {
+        regex: symbolOperators ? new RegExp(`(${symbolOperators})`, 'g') : /(<=|>=|!=|<|>|=)/g,
         type: TokenType.OPERATOR,
         modifiers: 0
       }
@@ -316,13 +348,8 @@ export class SemanticTokensProvider {
   }
 
   private isBuiltInFunction(name: string): boolean {
-    const builtInFunctions = [
-      'empty', 'exists', 'all', 'where', 'select', 'first', 'last', 'tail',
-      'skip', 'take', 'distinct', 'count', 'contains', 'startsWith', 'endsWith',
-      'matches', 'length', 'as', 'is', 'abs', 'ceiling', 'floor', 'round',
-      'now', 'today'
-    ];
-    return builtInFunctions.includes(name);
+    // Use Registry API to check if function exists
+    return Boolean(this.functionRegistry.getFunction(name));
   }
 
   private isFHIRResourceType(name: string): boolean {

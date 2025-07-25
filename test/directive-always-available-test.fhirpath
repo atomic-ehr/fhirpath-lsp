@@ -1,0 +1,16 @@
+// Test: All directives should always be available in autocomplete
+
+// @resource Patient
+// Try typing "// @" here - should show resource, input, inputfile options
+// @
+
+// @inputfile patient.json  
+// Try typing "// @" here - should still show all options even though inputfile exists
+// @
+
+// Even with conflicts, all options should be available
+// @input {"resourceType": "Patient", "id": "test"}
+// Try typing "// @" here - should show all options even with input/inputfile conflict  
+// @
+
+Patient.name

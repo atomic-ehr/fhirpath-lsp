@@ -34,12 +34,14 @@ Establish basic LSP functionality with syntax highlighting and error detection
   - **Status**: Completed
   - **Actual**: 3 hours
 
-- [x] **Task 4**: Implement diagnostic provider for syntax errors ✅  
+- [x] **Task 4**: Implement enhanced diagnostic provider with rich error reporting ✅  
   - Created diagnostic provider using parser integration
-  - Mapped parse errors to LSP diagnostics
+  - Implemented DiagnosticBuilder pattern with structured error codes
+  - Added intelligent suggestions and fixes for common errors
+  - Integrated rich text formatting and span-based error reporting
   - Added real-time validation with custom rules
-  - **Status**: Completed
-  - **Actual**: 4 hours
+  - **Status**: Enhanced with DiagnosticBuilder system
+  - **Actual**: 4 hours (initial) + 3 hours (enhancement)
 
 - [x] **Task 5**: Create VS Code extension client ✅
   - Set up extension entry point with comprehensive features
@@ -184,11 +186,73 @@ parse('Observation.value.as(Quantity).value > 10') // Should succeed
 - **Build Integration**: Ensure ../fhirpath dependency resolves correctly
 - **VS Code Compatibility**: Test with VS Code 1.84+ versions
 
+## Enhanced Diagnostic System
+
+### DiagnosticBuilder API
+The enhanced diagnostic system provides rich error reporting with structured codes, intelligent suggestions, and precise source location information.
+
+#### Key Features
+- **Structured Error Codes**: Categorized diagnostic codes (E001-E012) for different error types
+- **Intelligent Suggestions**: Automatic suggestions for common typos and fixes
+- **Rich Formatting**: Beautiful text output similar to modern compiler diagnostics
+- **LSP Integration**: Seamless conversion to LSP diagnostic format
+- **Span-based Locations**: Precise error positioning with start/end coordinates
+
+#### Usage Example
+```typescript
+import { DiagnosticBuilder, DiagnosticCode, DiagnosticUtils } from '../diagnostics/DiagnosticBuilder';
+
+// Create a diagnostic using the builder
+const diagnostic = DiagnosticBuilder.error(DiagnosticCode.UnknownFunction)
+  .withMessage("Unknown function 'whre'")
+  .withSpan(DiagnosticUtils.spanFromCoords(0, 10, 0, 14))
+  .withSourceText("Patient.whre(active = true)")
+  .suggest("Did you mean 'where'?", "where")
+  .build();
+
+// Format for display
+console.log(DiagnosticUtils.formatDiagnosticText(diagnostic));
+```
+
+#### Output Format
+```
+error: Unknown function 'whre' [E007]
+ --> 1:11-15
+   1 | Patient.whre(active = true)
+     |          ^^^^
+
+suggestions:
+  - Did you mean 'where'? (replace with 'where')
+```
+
+#### Available Diagnostic Codes
+- `E001`: SyntaxError - General syntax errors
+- `E002`: TypeError - Type-related errors
+- `E003`: InvalidPath - Invalid FHIR resource paths
+- `E004`: UnknownProperty - Unknown properties or fields
+- `E005`: InvalidOperator - Invalid operators
+- `E006`: InvalidLiteral - Invalid literal values
+- `E007`: UnknownFunction - Unknown or misspelled functions
+- `E008`: UnterminatedString - Unterminated string literals
+- `E009`: MissingArgument - Missing function arguments
+- `E010`: TooManyArguments - Too many function arguments
+- `E011`: InvalidContext - Invalid expression context
+- `E012`: CircularReference - Circular reference detection
+
+#### Intelligent Suggestions
+The system provides context-aware suggestions for:
+- Function name typos (using edit distance matching)
+- Property name corrections
+- Syntax error fixes (missing brackets, quotes, etc.)
+- Type conversion suggestions
+- Performance optimization hints
+
 ## Notes
 - Focus on core functionality over optimization in Phase 1
 - Ensure all basic LSP capabilities are working before moving to Phase 2  
 - Document any API limitations encountered with @atomic-ehr/fhirpath
 - Keep detailed logs of performance measurements for optimization
+- Enhanced diagnostic system provides foundation for code actions and fixes
 
 ---
 **Next Phase**: Phase 2 - Semantic Analysis & Auto-completion (Weeks 4-6)

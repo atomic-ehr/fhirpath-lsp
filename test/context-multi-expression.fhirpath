@@ -1,11 +1,11 @@
-// @resource Observation
+// @resource Patient
 // @inputfile patient-example.json
 
 // Multi-expression file with Patient context
 // Expressions should be validated against Patient resource
 
 // Valid Patient expressions
-name.family
+name.w
 active = true
 birthDate < today()
 

@@ -1,0 +1,10 @@
+// Test file for directive validation - Last directive wins
+
+// @inputfile patient.json              // Will be overridden - should show warning
+// @input {"resourceType": "Patient", "id": "test"}  // Will be overridden - should show warning  
+// @inputfile final-patient.json        // FINAL - This will be used for evaluation
+
+// @resource Patient                     // Will be overridden - should show warning
+// @resource Observation                 // FINAL - This will be used for evaluation
+
+Patient.name.given

@@ -1,4 +1,5 @@
 import { CompletionItem, CompletionItemKind, MarkupKind } from 'vscode-languageserver/node';
+import { RegistryAdapter, IRegistryAdapter } from './RegistryAdapter';
 
 export interface FHIRPathFunction {
   name: string;
@@ -36,14 +37,29 @@ export class FHIRPathFunctionRegistry {
   private functions: Map<string, FHIRPathFunction> = new Map();
   private operators: Map<string, FHIRPathOperator> = new Map();
   private keywords: Map<string, FHIRPathKeyword> = new Map();
+  private registryAdapter: IRegistryAdapter;
 
   constructor() {
-    this.initializeFunctions();
-    this.initializeOperators();
-    this.initializeKeywords();
+    this.registryAdapter = new RegistryAdapter();
+    this.initializeFromRegistry();
   }
 
-  private initializeFunctions(): void {
+  private initializeFromRegistry(): void {
+    // Load functions from registry
+    const functions = this.registryAdapter.getFunctions();
+    functions.forEach(func => this.functions.set(func.name, func));
+
+    // Load operators from registry
+    const operators = this.registryAdapter.getOperators();
+    operators.forEach(op => this.operators.set(op.symbol, op));
+
+    // Load keywords from registry
+    const keywords = this.registryAdapter.getKeywords();
+    keywords.forEach(kw => this.keywords.set(kw.keyword, kw));
+  }
+
+  // Legacy method kept for reference - will be removed
+  private initializeFunctionsLegacy(): void {
     const functions: FHIRPathFunction[] = [
       // Existence functions
       {
@@ -316,7 +332,8 @@ export class FHIRPathFunctionRegistry {
     functions.forEach(func => this.functions.set(func.name, func));
   }
 
-  private initializeOperators(): void {
+  // Legacy method kept for reference - will be removed
+  private initializeOperatorsLegacy(): void {
     const operators: FHIRPathOperator[] = [
       {
         symbol: '.',
@@ -419,7 +436,8 @@ export class FHIRPathFunctionRegistry {
     operators.forEach(op => this.operators.set(op.symbol, op));
   }
 
-  private initializeKeywords(): void {
+  // Legacy method kept for reference - will be removed  
+  private initializeKeywordsLegacy(): void {
     const keywords: FHIRPathKeyword[] = [
       {
         keyword: 'true',

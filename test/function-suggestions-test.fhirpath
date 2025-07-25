@@ -1,0 +1,33 @@
+// Test various function typos that should trigger suggestions
+
+// Common typos that should suggest 'where'
+Patient.name.whre(family = 'Smith')
+Patient.name.were(family = 'Smith') 
+Patient.name.wher(family = 'Smith')
+
+// Common typos that should suggest 'select'
+Patient.name.slect(given)
+Patient.name.selct(given)
+
+// Common typos that should suggest 'exists'
+Patient.telecom.exsits()
+Patient.telecom.exist()
+
+// Common typos that should suggest 'contains'
+Patient.name.family.contin('Sm')
+Patient.name.family.contins('Sm')
+
+// Typos that should suggest 'first'
+Patient.name.frist()
+Patient.name.fisrt()
+
+// Typos that should suggest 'count'
+Patient.telecom.cont()
+Patient.telecom.cout()
+
+// Less common function with typo
+Patient.name.substrin(0, 5)
+Patient.birthDate.tostring()
+
+// Completely unknown function (should show generic message)
+Patient.invalidFunction()

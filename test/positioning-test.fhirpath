@@ -1,0 +1,10 @@
+// Test file to check code action positioning
+// The quick fix for 'unknownFunc' should appear at column 8, not column 0
+
+Patient.unknownFunc().name
+
+// Another test - should be at column 16
+Patient.name.badFunction()
+
+// Test in middle of expression - should be at column 23  
+Patient.name.where(invalidFn() = true)

@@ -1,0 +1,19 @@
+// Test file for code actions - these should now generate diagnostics!
+
+// This should trigger function name suggestions (E007)
+Patient.whre(active = true)
+
+// This should trigger another function suggestion
+Patient.slect(name)
+
+// This should trigger bracket fixes (E001)
+Patient.name[use = 'official'
+
+// This should trigger string fixes (E008)
+Patient.name = 'John
+
+// This should trigger operator fixes (E005)
+Patient.active true
+
+// This should be valid (no errors)
+Patient.where(active = true)

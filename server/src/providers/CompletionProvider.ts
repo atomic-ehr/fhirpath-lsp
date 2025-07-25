@@ -22,6 +22,9 @@ export interface CompletionContext {
   isAfterDot: boolean;
   isInFunction: boolean;
   isInBrackets: boolean;
+  isInComment: boolean;
+  isInDirective: boolean;
+  directiveType?: string;
   parentExpression?: string;
 }
 
@@ -44,6 +47,19 @@ export class CompletionProvider {
     params: CompletionParams
   ): Promise<CompletionItem[]> {
     try {
+      const lineText = document.getText({
+        start: { line: params.position.line, character: 0 },
+        end: { line: params.position.line, character: params.position.character }
+      });
+      
+      console.log(`CompletionProvider: request for ${document.uri} at ${params.position.line}:${params.position.character}`);
+      console.log(`Trigger character: ${params.context?.triggerCharacter}`);
+      console.log(`Line text: "${lineText}"`);
+      console.log(`Full line: "${document.getText({
+        start: { line: params.position.line, character: 0 },
+        end: { line: params.position.line + 1, character: 0 }
+      }).replace('\n', '')}"`);
+
       // Generate cache key
       const cacheKey = cacheService.generateCompletionKey(
         document.uri,
@@ -54,12 +70,27 @@ export class CompletionProvider {
       // Check cache first
       const cached = cacheService.getCompletion(cacheKey);
       if (cached) {
+        console.log(`Returning cached completions: ${cached.length} items`);
         return cached;
       }
 
       // Generate completions
       const context = this.analyzeCompletionContext(document, params.position, params.context?.triggerCharacter);
+      console.log(`Context analysis result:`, {
+        isInComment: context.isInComment,
+        isInDirective: context.isInDirective,
+        directiveType: context.directiveType,
+        triggerCharacter: context.triggerCharacter,
+        text: context.text.substring(0, 50) + (context.text.length > 50 ? '...' : '')
+      });
+      
       const completions = await this.getCompletionsForContext(context, document);
+      console.log(`Generated ${completions.length} completions`);
+      
+      // Log first few completions for debugging
+      if (completions.length > 0) {
+        console.log(`First few completions:`, completions.slice(0, 3).map(c => ({ label: c.label, kind: c.kind })));
+      }
 
       // Cache the result
       cacheService.setCompletion(cacheKey, completions);
@@ -83,6 +114,29 @@ export class CompletionProvider {
       end: { line: position.line, character: position.character }
     });
 
+    // Check if we're in a comment/directive context FIRST
+    const commentContext = this.analyzeCommentContext(lineText, position.character);
+    console.log(`Comment context for line "${lineText}" at pos ${position.character}:`, commentContext);
+
+    // If we're in a directive, use the line text directly for completion
+    if (commentContext.isInDirective) {
+      return {
+        text: lineText,
+        position,
+        triggerCharacter,
+        currentToken: undefined,
+        previousToken: undefined,
+        isAfterDot: false,
+        isInFunction: false,
+        isInBrackets: false,
+        isInComment: commentContext.isInComment,
+        isInDirective: commentContext.isInDirective,
+        directiveType: commentContext.directiveType,
+        parentExpression: undefined
+      };
+    }
+
+    // For non-directive contexts, proceed with normal expression analysis
     // Parse multi-expressions from the current line to get the specific expression at cursor
     const currentExpressionContext = this.getCurrentExpressionAtPosition(lineText, position.character);
     
@@ -112,6 +166,9 @@ export class CompletionProvider {
       isAfterDot,
       isInFunction,
       isInBrackets,
+      isInComment: commentContext.isInComment,
+      isInDirective: commentContext.isInDirective,
+      directiveType: commentContext.directiveType,
       parentExpression
     };
   }
@@ -290,6 +347,60 @@ export class CompletionProvider {
     return match ? match[1] : undefined;
   }
 
+  private analyzeCommentContext(lineText: string, cursorPosition: number): {
+    isInComment: boolean;
+    isInDirective: boolean;
+    directiveType?: string;
+  } {
+    const textBeforeCursor = lineText.substring(0, cursorPosition);
+    
+    // Check if we're in a comment
+    const commentMatch = textBeforeCursor.match(/^\s*\/\//);
+    if (!commentMatch) {
+      return { isInComment: false, isInDirective: false };
+    }
+
+    // Check if the line contains @ symbol indicating directive
+    if (!textBeforeCursor.includes('@')) {
+      return { isInComment: true, isInDirective: false };
+    }
+
+    // Extract content after the @ symbol
+    const atIndex = textBeforeCursor.lastIndexOf('@');
+    if (atIndex === -1) {
+      return { isInComment: true, isInDirective: false };
+    }
+
+    const afterAt = textBeforeCursor.substring(atIndex + 1);
+    
+    // If we're right after @, we're starting a directive
+    if (afterAt.trim() === '') {
+      return {
+        isInComment: true,
+        isInDirective: true,
+        directiveType: undefined
+      };
+    }
+
+    // Check if we have a partial or complete directive
+    const directiveMatch = afterAt.match(/^(\w+)(\s+.*)?$/);
+    if (directiveMatch) {
+      const [, directiveType, rest] = directiveMatch;
+      return {
+        isInComment: true,
+        isInDirective: true,
+        directiveType: directiveType
+      };
+    }
+
+    // We're in a directive context but haven't typed a valid directive yet
+    return {
+      isInComment: true,
+      isInDirective: true,
+      directiveType: undefined
+    };
+  }
+
   private async getCompletionsForContext(context: CompletionContext, document: TextDocument): Promise<CompletionItem[]> {
     const completions: CompletionItem[] = [];
 
@@ -299,7 +410,10 @@ export class CompletionProvider {
       documentContext = await this.contextService.getCompletionContext(document);
     }
 
-    if (context.isAfterDot) {
+    if (context.isInDirective) {
+      // In directive context: provide directive-specific completions
+      completions.push(...this.getDirectiveCompletions(context, document));
+    } else if (context.isAfterDot) {
       // After dot: suggest FHIR resource properties first, then functions
       completions.push(...this.getFHIRResourcePropertyCompletions(context, documentContext));
       completions.push(...this.getFunctionCompletions(context));
@@ -330,8 +444,12 @@ export class CompletionProvider {
       // Sort functions by relevance based on context
       return allFunctions.map(func => {
         // Boost relevance for commonly used functions after properties (but still after properties)
-        const commonAfterProperty = ['exists', 'empty', 'first', 'last', 'count', 'where', 'select'];
-        if (commonAfterProperty.includes(func.label)) {
+        // Use Registry API to get functions by category
+        const commonCategories = ['existence', 'navigation', 'manipulation', 'filtering'];
+        const funcDetails = this.functionRegistry.getFunction(func.label);
+        const isCommon = funcDetails && commonCategories.includes(funcDetails.category);
+        
+        if (isCommon) {
           return {
             ...func,
             sortText: `1_${func.label}` // Functions come after properties (0_)
@@ -572,6 +690,170 @@ export class CompletionProvider {
       insertText: filter.pattern,
       sortText: `2_${filter.pattern}`
     }));
+  }
+
+  private getDirectiveCompletions(context: CompletionContext, document: TextDocument): CompletionItem[] {
+    console.log(`Getting directive completions for directiveType: ${context.directiveType}`);
+    const completions: CompletionItem[] = [];
+
+    // If no directive type yet, suggest all available directives
+    if (!context.directiveType) {
+      console.log('No directive type, providing all directive names');
+      
+      // Always show all directives - let "last wins" behavior handle conflicts
+      const directives = [
+        {
+          label: 'inputfile',
+          kind: CompletionItemKind.Keyword,
+          detail: 'Load input data from file',
+          documentation: {
+            kind: MarkupKind.Markdown,
+            value: 'Load FHIR resource data from a JSON file.\n\nExample: `// @inputfile patient-example.json`\n\n**Note:** If multiple directives exist, the last one will be used.'
+          },
+          insertText: 'inputfile ',
+          sortText: '0_inputfile'
+        },
+        {
+          label: 'input',
+          kind: CompletionItemKind.Keyword,
+          detail: 'Inline input data',
+          documentation: {
+            kind: MarkupKind.Markdown,
+            value: 'Provide FHIR resource data inline as JSON.\n\nExample: `// @input {"resourceType": "Patient", "id": "example"}`\n\n**Note:** If multiple directives exist, the last one will be used.'
+          },
+          insertText: 'input ',
+          sortText: '0_input'
+        },
+        {
+          label: 'resource',
+          kind: CompletionItemKind.Keyword,
+          detail: 'Specify resource type',
+          documentation: {
+            kind: MarkupKind.Markdown,
+            value: 'Specify the FHIR resource type for context.\n\nExample: `// @resource Patient`\n\n**Note:** If multiple directives exist, the last one will be used.'
+          },
+          insertText: 'resource ',
+          sortText: '0_resource'
+        }
+      ];
+
+      completions.push(...directives);
+      console.log(`Added ${directives.length} directive completions (all directives always available)`);
+    } else {
+      // Provide specific completions based on directive type
+      console.log(`Providing completions for directive type: ${context.directiveType}`);
+      switch (context.directiveType) {
+        case 'inputfile':
+          const fileCompletions = this.getFilePathCompletions(document);
+          completions.push(...fileCompletions);
+          console.log(`Added ${fileCompletions.length} file path completions`);
+          break;
+        case 'resource':
+          const resourceCompletions = this.getFHIRResourceTypeCompletions();
+          completions.push(...resourceCompletions);
+          console.log(`Added ${resourceCompletions.length} resource type completions`);
+          break;
+        case 'input':
+          const inputCompletions = this.getInlineInputCompletions();
+          completions.push(...inputCompletions);
+          console.log(`Added ${inputCompletions.length} input template completions`);
+          break;
+        default:
+          console.log(`Unknown directive type: ${context.directiveType}`);
+      }
+    }
+
+    console.log(`Total directive completions: ${completions.length}`);
+    return completions;
+  }
+
+
+  private getFilePathCompletions(document: TextDocument): CompletionItem[] {
+    // Basic file path suggestions for common patterns
+    const commonPatterns = [
+      { 
+        label: 'patient-example.json',
+        kind: CompletionItemKind.File,
+        detail: 'Example Patient resource file',
+        insertText: 'patient-example.json'
+      },
+      { 
+        label: 'observation-example.json',
+        kind: CompletionItemKind.File,
+        detail: 'Example Observation resource file',
+        insertText: 'observation-example.json'
+      },
+      { 
+        label: 'bundle-example.json',
+        kind: CompletionItemKind.File,
+        detail: 'Example Bundle resource file',
+        insertText: 'bundle-example.json'
+      },
+      { 
+        label: './data/',
+        kind: CompletionItemKind.Folder,
+        detail: 'Data directory',
+        insertText: './data/'
+      },
+      { 
+        label: '../examples/',
+        kind: CompletionItemKind.Folder,
+        detail: 'Examples directory',
+        insertText: '../examples/'
+      }
+    ];
+
+    return commonPatterns.map(pattern => ({
+      ...pattern,
+      sortText: `1_${pattern.label}`
+    }));
+  }
+
+  private getFHIRResourceTypeCompletions(): CompletionItem[] {
+    const fhirResourceTypes = [
+      'Patient', 'Observation', 'Condition', 'Procedure', 'MedicationRequest',
+      'DiagnosticReport', 'Encounter', 'Organization', 'Practitioner', 'Location',
+      'Device', 'Medication', 'Substance', 'AllergyIntolerance', 'Immunization',
+      'Bundle', 'Composition', 'DocumentReference', 'Binary', 'HealthcareService',
+      'Appointment', 'AppointmentResponse', 'Schedule', 'Slot', 'Coverage',
+      'Claim', 'ClaimResponse', 'ExplanationOfBenefit', 'Goal', 'CarePlan',
+      'CareTeam', 'ServiceRequest', 'ActivityDefinition', 'PlanDefinition'
+    ];
+
+    return fhirResourceTypes.map(resourceType => ({
+      label: resourceType,
+      kind: CompletionItemKind.Class,
+      detail: `FHIR ${resourceType} resource type`,
+      documentation: {
+        kind: MarkupKind.Markdown,
+        value: `FHIR ${resourceType} resource type for context declaration.`
+      },
+      insertText: resourceType,
+      sortText: `0_${resourceType}`
+    }));
+  }
+
+  private getInlineInputCompletions(): CompletionItem[] {
+    const templates = [
+      {
+        label: 'Patient template',
+        kind: CompletionItemKind.Snippet,
+        detail: 'Basic Patient resource template',
+        documentation: 'Template for a basic Patient resource',
+        insertText: '{"resourceType": "Patient", "id": "example", "active": true, "name": [{"family": "Doe", "given": ["John"]}]}',
+        sortText: '0_patient'
+      },
+      {
+        label: 'Observation template',
+        kind: CompletionItemKind.Snippet,
+        detail: 'Basic Observation resource template',
+        documentation: 'Template for a basic Observation resource',
+        insertText: '{"resourceType": "Observation", "id": "example", "status": "final", "code": {"text": "Example"}, "subject": {"reference": "Patient/example"}}',
+        sortText: '0_observation'
+      }
+    ];
+
+    return templates;
   }
 
   private filterAndSortCompletions(

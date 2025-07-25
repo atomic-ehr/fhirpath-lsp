@@ -1,0 +1,5 @@
+Patient.name.whre(family = 'Smith'
+Patient.active = tru
+Patient.contact[address.city 'Boston'
+Patient.gender  = 'male  
+Patient.birthDate > '1990-01-01

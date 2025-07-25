@@ -122,18 +122,24 @@ export class FHIRPathContextService {
   private buildContextFromDeclarations(declarations: ContextDeclaration[]): Partial<FHIRPathContext> {
     const context: Partial<FHIRPathContext> = {};
 
+    // Process declarations in order - last one wins for conflicts
     for (const declaration of declarations) {
       switch (declaration.type) {
         case 'inputfile':
+          // Clear any existing input data when setting inputfile (mutually exclusive)
+          context.inputData = undefined;
           context.inputFile = declaration.value;
           // Try to infer resource type from filename
           const inferredType = this.inferResourceTypeFromFilename(declaration.value);
           if (inferredType) {
             context.resourceType = inferredType;
           }
+          console.log(`Using @inputfile directive: ${declaration.value} (line ${declaration.line})`);
           break;
           
         case 'input':
+          // Clear any existing input file when setting input data (mutually exclusive)
+          context.inputFile = undefined;
           // Handle inline JSON data
           try {
             context.inputData = JSON.parse(declaration.value);
@@ -141,6 +147,7 @@ export class FHIRPathContextService {
             if (context.inputData && context.inputData.resourceType) {
               context.resourceType = context.inputData.resourceType;
             }
+            console.log(`Using @input directive (line ${declaration.line})`);
           } catch (error) {
             // Invalid JSON - this will be caught in validation
             console.warn('Invalid JSON in @input directive:', error);
@@ -149,6 +156,7 @@ export class FHIRPathContextService {
           
         case 'resource':
           context.resourceType = declaration.value;
+          console.log(`Using @resource directive: ${declaration.value} (line ${declaration.line})`);
           break;
       }
     }

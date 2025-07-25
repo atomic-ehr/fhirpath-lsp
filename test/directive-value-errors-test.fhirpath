@@ -1,0 +1,17 @@
+// Test file for directive value validation - errors should highlight values, not directive names
+
+// @resource InvalidResourceType      // Error should highlight "InvalidResourceType"
+// @resource Patient                  // Valid - no error
+// @resource                          // Error should highlight end of line (missing value)
+
+// @inputfile patient.txt             // Warning should highlight "patient.txt" (wrong extension)
+// @inputfile "file with spaces.json" // Valid - quoted path with spaces
+// @inputfile file with spaces.json   // Warning should highlight entire path (unquoted spaces)
+// @inputfile patient.json            // Valid - no error
+
+// @input invalid json syntax         // Error should highlight "invalid json syntax"
+// @input {"resourceType": "Patient"} // Valid - no error
+// @input {"invalid": "no resourceType"} // Warning should highlight the JSON (missing resourceType)
+// @input                             // Error should highlight end of line (missing value)
+
+Patient.name

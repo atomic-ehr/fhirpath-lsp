@@ -99,6 +99,40 @@ function startLanguageServer(context: ExtensionContext) {
         // Update status bar based on diagnostics
         updateStatusBar(diagnostics.length);
         next(uri, diagnostics);
+      },
+
+      // Code action middleware to prioritize our actions over others (like Copilot)
+      provideCodeActions: async (document, range, context, token, next) => {
+        console.log('Code action middleware: intercepting request');
+        
+        // Only for FHIRPath files
+        if (document.languageId !== 'fhirpath') {
+          return next(document, range, context, token);
+        }
+
+        // Get our actions first
+        const ourActions = await next(document, range, context, token);
+        
+        // Filter and prioritize our actions
+        if (Array.isArray(ourActions)) {
+          console.log(`Code action middleware: got ${ourActions.length} actions`);
+          
+          // Mark all our actions as high priority and preferred
+          const prioritizedActions = ourActions.map((action: any) => {
+            if (action.title && action.title.includes('FHIRPath')) {
+              return {
+                ...action,
+                isPreferred: true,
+                priority: (action.priority || 0) + 10000
+              };
+            }
+            return action;
+          });
+
+          return prioritizedActions;
+        }
+
+        return ourActions;
       }
     },
 
@@ -202,6 +236,12 @@ function registerCommands(context: ExtensionContext) {
     }
   });
 
+  // Test extension activity
+  const testExtensionCommand = commands.registerCommand('fhirpath.testExtension', async () => {
+    const editor = window.activeTextEditor;
+    window.showInformationMessage(`FHIRPath Extension Active! Language: ${editor?.document.languageId}, URI: ${editor?.document.uri.toString()}`);
+  });
+
   // Restart language server
   const restartServerCommand = commands.registerCommand('fhirpath.restartServer', async () => {
     try {
@@ -222,12 +262,47 @@ function registerCommands(context: ExtensionContext) {
     }
   });
 
+  // Format document
+  const formatDocumentCommand = commands.registerCommand('fhirpath.sourceAction.formatDocument', async () => {
+    const editor = window.activeTextEditor;
+    if (!editor || editor.document.languageId !== 'fhirpath') {
+      window.showWarningMessage('Please open a FHIRPath file to format');
+      return;
+    }
+
+    try {
+      await commands.executeCommand('editor.action.formatDocument');
+      window.showInformationMessage('Document formatted');
+    } catch (error) {
+      window.showErrorMessage(`Failed to format document: ${error}`);
+    }
+  });
+
+  // Fix all issues
+  const fixAllCommand = commands.registerCommand('fhirpath.sourceAction.fixAll', async () => {
+    const editor = window.activeTextEditor;
+    if (!editor || editor.document.languageId !== 'fhirpath') {
+      window.showWarningMessage('Please open a FHIRPath file to fix issues');
+      return;
+    }
+
+    try {
+      await commands.executeCommand('editor.action.sourceAction', { kind: 'source.fixAll' });
+      window.showInformationMessage('Fixed all auto-fixable issues');
+    } catch (error) {
+      window.showErrorMessage(`Failed to fix issues: ${error}`);
+    }
+  });
+
   // Register all commands
   context.subscriptions.push(
     validateCommand,
     clearCacheCommand,
     showCacheStatsCommand,
+    testExtensionCommand,
     restartServerCommand,
+    formatDocumentCommand,
+    fixAllCommand,
     statusBarItem
   );
 

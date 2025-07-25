@@ -35,7 +35,7 @@
     "typecheck:shared": "cd shared && bun run typecheck",
     "clean": "rm -rf client/out server/out shared/out",
     "install:all": "bun install && cd client && bun install && cd ../server && bun install && cd ../shared && bun install",
-    "dev": "bun run build && code --extensionDevelopmentPath=. --new-window",
+    "dev": "bun run build && code-insiders --extensionDevelopmentPath=. --new-window",
     "package": "cd client && bunx vsce package",
     "lint": "bunx eslint . --ext .ts",
     "format": "bunx prettier --write ."

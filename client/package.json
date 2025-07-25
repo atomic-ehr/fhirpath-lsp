@@ -14,7 +14,8 @@
   "categories": [
     "Programming Languages",
     "Linters",
-    "Formatters"
+    "Formatters",
+    "Other"
   ],
   "keywords": [
     "fhir",
@@ -23,7 +24,11 @@
     "hl7"
   ],
   "activationEvents": [
-    "onLanguage:fhirpath"
+    "onLanguage:fhirpath",
+    "*"
+  ],
+  "extensionKind": [
+    "workspace"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -103,6 +108,48 @@
           ],
           "default": "off",
           "description": "Traces the communication between VS Code and the language server"
+        },
+        "fhirpath.codeActions.enable": {
+          "scope": "resource",
+          "type": "boolean",
+          "default": true,
+          "description": "Enable code actions (quick fixes, refactoring)"
+        },
+        "fhirpath.codeActions.quickFix.enable": {
+          "scope": "resource",
+          "type": "boolean",
+          "default": true,
+          "description": "Enable quick fix code actions"
+        },
+        "fhirpath.codeActions.source.enable": {
+          "scope": "resource",
+          "type": "boolean",
+          "default": true,
+          "description": "Enable source code actions (formatting, organizing)"
+        },
+        "fhirpath.codeActions.refactor.enable": {
+          "scope": "resource",
+          "type": "boolean",
+          "default": true,
+          "description": "Enable refactoring code actions"
+        },
+        "fhirpath.codeActions.priority": {
+          "scope": "resource",
+          "type": "string",
+          "enum": [
+            "low",
+            "normal", 
+            "high",
+            "highest"
+          ],
+          "default": "highest",
+          "description": "Priority of FHIRPath code actions over other extensions (like Copilot)"
+        },
+        "fhirpath.suppressOtherCodeActions": {
+          "scope": "resource",
+          "type": "boolean",
+          "default": true,
+          "description": "Suppress code actions from other extensions in FHIRPath files"
         }
       }
     },
@@ -122,6 +169,18 @@
       {
         "command": "fhirpath.restartServer",
         "title": "FHIRPath: Restart Language Server"
+      },
+      {
+        "command": "fhirpath.sourceAction.formatDocument",
+        "title": "FHIRPath: Format Document"
+      },
+      {
+        "command": "fhirpath.sourceAction.fixAll",
+        "title": "FHIRPath: Fix All Issues"
+      },
+      {
+        "command": "fhirpath.testExtension",
+        "title": "FHIRPath: Test Extension"
       }
     ],
     "menus": {
@@ -129,6 +188,16 @@
         {
           "when": "resourceLangId == fhirpath",
           "command": "fhirpath.validateExpression",
+          "group": "fhirpath"
+        },
+        {
+          "when": "resourceLangId == fhirpath",
+          "command": "fhirpath.sourceAction.formatDocument",
+          "group": "fhirpath"
+        },
+        {
+          "when": "resourceLangId == fhirpath",
+          "command": "fhirpath.sourceAction.fixAll",
           "group": "fhirpath"
         }
       ],
@@ -145,6 +214,14 @@
         },
         {
           "command": "fhirpath.restartServer"
+        },
+        {
+          "command": "fhirpath.sourceAction.formatDocument",
+          "when": "resourceLangId == fhirpath"
+        },
+        {
+          "command": "fhirpath.sourceAction.fixAll",
+          "when": "resourceLangId == fhirpath"
         }
       ]
     },
@@ -152,7 +229,25 @@
       "[fhirpath]": {
         "editor.semanticHighlighting.enabled": true,
         "editor.wordBasedSuggestions": "off",
-        "editor.suggest.showWords": false
+        "editor.suggest.showWords": false,
+        "editor.defaultFormatter": "atomic-ehr.fhirpath-lsp-client",
+        "editor.formatOnSave": true,
+        "editor.formatOnPaste": true,
+        "editor.formatOnType": false,
+        "editor.codeActionsOnSave": {
+          "source.fixAll": "explicit",
+          "source.organizeImports": false,
+          "source.format": "explicit"
+        },
+        "editor.codeActionsOnSaveTimeout": 3000,
+        "editor.lightBulb.enabled": true,
+        "github.copilot.enable": false,
+        "github.copilot.inlineSuggest.enable": false,
+        "copilot.enable": false,
+        "editor.inlineSuggest.enabled": false,
+        "editor.suggest.filterGraceful": false,
+        "editor.suggest.priority": "bottom",
+        "fhirpath.codeActions.priority": "highest"
       }
     }
   },
