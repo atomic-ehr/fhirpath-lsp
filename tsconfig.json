@@ -20,5 +20,5 @@
     { "path": "./server" },
     { "path": "./shared" }
   ],
-  "exclude": ["node_modules", "out", "**/*.test.ts"]
+  "exclude": ["node_modules", "out", "**/*.test.ts", "examples"]
 }

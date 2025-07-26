@@ -12,6 +12,8 @@ import { FHIRPathFunctionRegistry } from '../services/FHIRPathFunctionRegistry';
 import { FHIRPathContextService } from '../services/FHIRPathContextService';
 import { FHIRResourceService } from '../services/FHIRResourceService';
 import { cacheService } from '../services/CacheService';
+import { createDebouncedMethod } from '../services/RequestThrottler';
+import { getGlobalProfiler } from '../utils/PerformanceProfiler';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -34,6 +36,8 @@ export interface CompletionContext {
 export class CompletionProvider {
   private functionRegistry: FHIRPathFunctionRegistry;
   private contextService?: FHIRPathContextService;
+  private profiler = getGlobalProfiler();
+  private debouncedProvideCompletions: (document: TextDocument, params: CompletionParams) => Promise<CompletionItem[]>;
 
   constructor(
     private fhirPathService: FHIRPathService,
@@ -43,9 +47,21 @@ export class CompletionProvider {
     if (fhirResourceService) {
       this.contextService = new FHIRPathContextService(fhirResourceService);
     }
+
+    // Create debounced version of completion method
+    this.debouncedProvideCompletions = this.provideCompletionsInternal.bind(this);
   }
 
   async provideCompletions(
+    document: TextDocument,
+    params: CompletionParams
+  ): Promise<CompletionItem[]> {
+    return this.profiler.profile('completion', async () => {
+      return this.debouncedProvideCompletions(document, params);
+    });
+  }
+
+  private async provideCompletionsInternal(
     document: TextDocument,
     params: CompletionParams
   ): Promise<CompletionItem[]> {

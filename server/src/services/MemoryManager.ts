@@ -152,7 +152,7 @@ export class MemoryManager extends EventEmitter implements IMemoryManager {
         services.push({
           serviceName,
           estimatedUsage: 0,
-          details: { error: 'Failed to estimate usage' }
+          details: { errorCount: 1 }
         });
       }
     }
@@ -318,3 +318,8 @@ export class MemoryManager extends EventEmitter implements IMemoryManager {
 
 // Singleton instance for global use
 export const memoryManager = new MemoryManager();
+
+// Factory function
+export function getMemoryManager(): MemoryManager {
+  return memoryManager;
+}

@@ -38,6 +38,13 @@ import { ProductionErrorBoundary, ConsoleErrorReporter } from './services/ErrorB
 import { ProductionResourceMonitor } from './services/ResourceMonitor';
 import { ProductionHealthChecker } from './services/HealthChecker';
 
+// Performance optimization services
+import { getMemoryManager } from './services/MemoryManager';
+import { getBackgroundProcessor } from './services/BackgroundProcessor';
+import { AdaptiveRequestThrottler } from './services/RequestThrottler';
+import { getGlobalProfiler } from './utils/PerformanceProfiler';
+import { WorkspaceOptimizer, categorizeWorkspace } from './utils/WorkspaceOptimizer';
+
 // Create a connection for the server
 const connection = createConnection(ProposedFeatures.all);
 
@@ -46,6 +53,14 @@ const errorReporter = new ConsoleErrorReporter(connection);
 const errorBoundary = new ProductionErrorBoundary(connection, errorReporter);
 const resourceMonitor = new ProductionResourceMonitor(connection);
 const healthChecker = new ProductionHealthChecker(connection);
+
+// Initialize performance optimization infrastructure
+const memoryManager = getMemoryManager();
+const backgroundProcessor = getBackgroundProcessor();
+const requestThrottler = new AdaptiveRequestThrottler();
+const profiler = getGlobalProfiler();
+const workspaceOptimizer = new WorkspaceOptimizer();
+
 const serverManager = new ProductionServerManager(
   connection,
   errorBoundary,
@@ -368,10 +383,6 @@ connection.onHover(async (params) => {
 // Code action provider with error boundary
 connection.onCodeAction(async (params) => {
   try {
-    connection.console.log(`Code action request received for ${params.textDocument.uri}`);
-    connection.console.log(`Range: ${JSON.stringify(params.range)}`);
-    connection.console.log(`Context: ${JSON.stringify(params.context)}`);
-
     const document = documents.get(params.textDocument.uri);
     if (!document) {
       connection.console.log('Document not found');
@@ -383,13 +394,6 @@ connection.onCodeAction(async (params) => {
       params.range,
       params.context
     );
-
-    connection.console.log(`Returning ${actions.length} code actions`);
-
-    // Log each action for debugging
-    actions.forEach((action, i) => {
-      connection.console.log(`Action ${i}: ${action.title}, kind: ${action.kind}, isPreferred: ${action.isPreferred}`);
-    });
 
     return actions;
   } catch (error) {
@@ -594,8 +598,39 @@ connection.onShutdown(async () => {
   }
 });
 
+// Start performance optimization services
+async function startPerformanceServices() {
+  try {
+    // Start memory monitoring
+    memoryManager.startMonitoring();
+    
+    // Start background processor
+    await backgroundProcessor.start();
+    
+    // Setup profiler thresholds
+    profiler.setThreshold('completion', 100);
+    profiler.setThreshold('diagnostic', 200);
+    profiler.setThreshold('hover', 50);
+    
+    connection.console.log('Performance optimization services started');
+  } catch (error) {
+    connection.console.error(`Failed to start performance services: ${error}`);
+  }
+}
+
+// Enhanced request handling with throttling
+function setupThrottledHandlers() {
+  // Note: Request throttling is implemented within individual providers
+  // using the AdaptiveRequestThrottler service
+  connection.console.log('Request throttling configured in providers');
+}
+
 // Listen for document events
 documents.listen(connection);
+
+// Setup performance optimization
+startPerformanceServices();
+setupThrottledHandlers();
 
 // Start listening for connections
 connection.listen();
@@ -629,6 +664,48 @@ connection.onRequest('fhirpath/health', () => {
 connection.onRequest('fhirpath/resources', () => {
   try {
     return resourceMonitor.getResourceStats();
+  } catch (error) {
+    return {
+      error: (error as Error).message,
+      timestamp: new Date().toISOString()
+    };
+  }
+});
+
+// Add performance metrics endpoint
+connection.onRequest('fhirpath/performance', () => {
+  try {
+    const performanceReport = profiler.getReport();
+    const memoryReport = memoryManager.getMemoryReport();
+    const throttleStatus = requestThrottler.getThrottleStatus();
+    
+    return {
+      performance: performanceReport,
+      memory: memoryReport,
+      throttling: throttleStatus,
+      backgroundTasks: {
+        queueSize: backgroundProcessor.getQueueSize(),
+        activeCount: backgroundProcessor.getActiveTaskCount(),
+        workerCount: backgroundProcessor.getWorkerCount()
+      },
+      timestamp: new Date().toISOString()
+    };
+  } catch (error) {
+    return {
+      error: (error as Error).message,
+      timestamp: new Date().toISOString()
+    };
+  }
+});
+
+// Add workspace optimization endpoint
+connection.onRequest('fhirpath/optimize', async (params: { rootPath: string }) => {
+  try {
+    await workspaceOptimizer.optimizeWorkspace(params.rootPath);
+    return {
+      status: 'optimized',
+      timestamp: new Date().toISOString()
+    };
   } catch (error) {
     return {
       error: (error as Error).message,

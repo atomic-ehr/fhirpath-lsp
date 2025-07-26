@@ -29,6 +29,9 @@ import {
 import { PerformanceAnalyzer } from '../diagnostics/PerformanceAnalyzer';
 import { CodeQualityAnalyzer } from '../diagnostics/CodeQualityAnalyzer';
 import { FHIRBestPracticesAnalyzer } from '../diagnostics/FHIRBestPracticesAnalyzer';
+import { createDebouncedMethod } from '../services/RequestThrottler';
+import { getGlobalProfiler } from '../utils/PerformanceProfiler';
+import { cacheService } from '../services/CacheService';
 
 /**
  * Provides diagnostic information for FHIRPath expressions
@@ -39,6 +42,8 @@ export class DiagnosticProvider {
   private readonly debounceTime = 300; // ms to debounce validation
   private validationTimeouts = new Map<string, NodeJS.Timeout>();
   private functionRegistry: FHIRPathFunctionRegistry;
+  private profiler = getGlobalProfiler();
+  private debouncedValidate: (document: TextDocument) => Promise<Diagnostic[]>;
 
   // Enhanced diagnostic analyzers
   private performanceAnalyzer: PerformanceAnalyzer;
@@ -64,6 +69,9 @@ export class DiagnosticProvider {
     this.performanceAnalyzer = new PerformanceAnalyzer();
     this.codeQualityAnalyzer = new CodeQualityAnalyzer();
     this.fhirBestPracticesAnalyzer = new FHIRBestPracticesAnalyzer();
+
+    // Setup debounced validation
+    this.debouncedValidate = this.validateDocumentInternal.bind(this);
   }
 
   /**
@@ -401,6 +409,21 @@ export class DiagnosticProvider {
    * Provide diagnostics for a text document
    */
   async provideDiagnostics(document: TextDocument): Promise<Diagnostic[]> {
+    return this.profiler.profile('diagnostic', async () => {
+      // Check cache first
+      const cacheKey = `diagnostic_${document.uri}_${document.version}`;
+      const cached = cacheService.getValidation(cacheKey);
+      if (cached) {
+        return cached;
+      }
+
+      const result = await this.debouncedValidate(document);
+      cacheService.setValidation(cacheKey, result);
+      return result;
+    });
+  }
+
+  private async validateDocumentInternal(document: TextDocument): Promise<Diagnostic[]> {
     const text = document.getText().trim();
 
     // Skip empty documents

@@ -1,4 +1,6 @@
 import { LRUCache } from 'lru-cache';
+import { PerformanceCache } from './PerformanceCache';
+import { getMemoryManager } from './MemoryManager';
 
 export interface CacheOptions {
   maxSize: number;
@@ -19,7 +21,12 @@ export class CacheService {
   private semanticTokensCache: LRUCache<string, any>;
   private hoverCache: LRUCache<string, any>;
   
+  // New performance caches
+  private performanceParseCache: PerformanceCache<string, any>;
+  private performanceCompletionCache: PerformanceCache<string, any>;
+  
   private metrics: Map<string, PerformanceMetrics> = new Map();
+  private memoryManager = getMemoryManager();
 
   constructor() {
     // Initialize caches with different sizes based on expected usage
@@ -53,8 +60,16 @@ export class CacheService {
       allowStale: true
     });
 
+    // Initialize performance caches
+    const { LRUCache: PerformanceLRUCache } = require('./PerformanceCache');
+    this.performanceParseCache = new PerformanceLRUCache({ maxSize: 50 * 1024 * 1024, maxEntries: 500 });
+    this.performanceCompletionCache = new PerformanceLRUCache({ maxSize: 20 * 1024 * 1024, maxEntries: 200 });
+
     // Initialize metrics
     this.initializeMetrics();
+
+    // Setup memory pressure handling
+    this.setupMemoryHandling();
   }
 
   private initializeMetrics(): void {
@@ -67,6 +82,49 @@ export class CacheService {
         hitRate: 0
       });
     });
+  }
+
+  private setupMemoryHandling(): void {
+    // Register with memory manager
+    this.memoryManager.registerCache('parseCache', () => ({
+      cacheName: 'parseCache',
+      size: this.parseCache.calculatedSize,
+      entries: this.parseCache.size,
+      hitRate: this.metrics.get('parse')?.hitRate || 0,
+      itemCount: this.parseCache.size,
+      estimatedMemory: this.parseCache.calculatedSize
+    }));
+
+    this.memoryManager.registerCache('performanceParseCache', () => ({
+      cacheName: 'performanceParseCache',
+      size: this.performanceParseCache.getStats().size,
+      entries: this.performanceParseCache.size(),
+      hitRate: this.performanceParseCache.getStats().hitRate,
+      itemCount: this.performanceParseCache.size(),
+      estimatedMemory: this.performanceParseCache.getStats().size
+    }));
+
+    // Handle memory pressure
+    this.memoryManager.onMemoryPressure(() => {
+      this.handleMemoryPressure();
+    });
+
+    // Start monitoring
+    this.memoryManager.startMonitoring();
+  }
+
+  private handleMemoryPressure(): void {
+    // Clear least important caches first
+    this.hoverCache.clear();
+    this.completionCache.clear();
+    
+    // Trim other caches
+    this.trimCache();
+    
+    // Force garbage collection if available
+    if (global.gc) {
+      global.gc();
+    }
   }
 
   // Parse cache methods
