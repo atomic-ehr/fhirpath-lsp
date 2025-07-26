@@ -1,4 +1,4 @@
 // @inputfile patient-example.json
 //
 //
-Patient.name.where(true).where(family = "Doe")
+Patient.name.given.join(' | ')

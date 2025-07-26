@@ -555,10 +555,10 @@ export class CompletionProvider {
         return properties.map(prop => ({
           label: prop.name,
           kind: CompletionItemKind.Property,
-          detail: `${documentContext.resourceType}.${prop.name}: ${prop.type}`,
+          detail: prop.type ? `${documentContext.resourceType}.${prop.name}: ${prop.type}` : `${documentContext.resourceType}.${prop.name}`,
           documentation: {
             kind: MarkupKind.Markdown,
-            value: `**${prop.name}** (${prop.type})\\n\\n${prop.description}`
+            value: `**${prop.name}**${prop.type ? ` (${prop.type})` : ''}\\n\\n${prop.description || 'No description available'}`
           },
           insertText: prop.name,
           sortText: `0_${prop.name}` // Context properties get high priority

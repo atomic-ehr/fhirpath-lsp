@@ -14,7 +14,9 @@
     "@atomic-ehr/fhirpath": "file:../../fhirpath",
     "lru-cache": "^11.1.0",
     "vscode-languageserver": "^9.0.1",
-    "vscode-languageserver-textdocument": "^1.0.11"
+    "vscode-languageserver-textdocument": "^1.0.11",
+    "pidusage": "^3.0.2",
+    "graceful-fs": "^4.2.11"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",

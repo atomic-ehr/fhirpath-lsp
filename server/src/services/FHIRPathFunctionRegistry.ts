@@ -535,11 +535,15 @@ export class FHIRPathFunctionRegistry {
   private formatFunctionDocumentation(func: FHIRPathFunction): string {
     let doc = `**${func.signature}**\n\n${func.description}\n\n`;
     
-    if (func.parameters.length > 0) {
+    if (func.parameters && func.parameters.length > 0) {
       doc += '**Parameters:**\n';
       func.parameters.forEach(param => {
+        if (!param) return; // Skip if param is undefined
         const optional = param.optional ? ' (optional)' : '';
-        doc += `- \`${param.name}\` (${param.type}${optional}): ${param.description}\n`;
+        const name = param.name || 'unknown';
+        const type = param.type || 'unknown';
+        const description = param.description || 'No description available';
+        doc += `- \`${name}\` (${type}${optional}): ${description}\n`;
       });
       doc += '\n';
     }

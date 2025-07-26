@@ -158,14 +158,6 @@ export class HoverProvider {
   }
 
   private async getHoverContentForContext(context: HoverContext, document: TextDocument): Promise<MarkupContent | null> {
-    // First, try to get expression evaluation if we have context service
-    if (this.fhirPathContextService) {
-      const expressionEvaluation = await this.getExpressionEvaluation(context, document);
-      if (expressionEvaluation) {
-        return expressionEvaluation;
-      }
-    }
-
     // Check if it's a function
     const func = this.functionRegistry.getFunction(context.word);
     if (func) {
@@ -205,262 +197,147 @@ export class HoverProvider {
     return null;
   }
 
-  /**
-   * Get expression evaluation for hover tooltip
-   */
-  private async getExpressionEvaluation(context: HoverContext, document: TextDocument): Promise<MarkupContent | null> {
-    try {
-      // Extract the current FHIRPath expression from the line
 
-      const currentExpression = this.extractCurrentExpression(document, context.position);
-      if (!currentExpression) return null;
 
-      // Parse context from the document
-      const fhirContext = await this.fhirPathContextService!.parseContext(document);
-      if (!fhirContext.isValid || (!fhirContext.inputFile && !fhirContext.inputData)) {
-        // No input data available, but we can still show static information if we have resource type
-        if (fhirContext.resourceType) {
-          return {
-            kind: MarkupKind.Markdown,
-            value: `**FHIRPath Expression**\n\n\`${currentExpression}\`\n\n*Context: ${fhirContext.resourceType}*\n\n*No input data available for evaluation. Expression will be evaluated when input data is provided via @inputfile or @input directives.*`
-          };
-        }
-        return null; // No context at all
-      }
-
-      // Validate that the expression's resource type matches the context resource type
-      const expressionResourceType = this.extractResourceTypeFromExpression(currentExpression);
-      if (expressionResourceType && fhirContext.resourceType && 
-          expressionResourceType !== fhirContext.resourceType) {
-        // Resource type mismatch - don't show evaluation result
-        console.warn(`Resource type mismatch: expression uses ${expressionResourceType}, context is ${fhirContext.resourceType}`);
-        return null;
-      }
-
-      // Load context data
-      const contextData = await this.fhirPathContextService!.loadContextData(fhirContext, document.uri);
-      if (!contextData) return null;
-
-      // Evaluate the expression
-      const { evaluate } = require('@atomic-ehr/fhirpath');
-      const result = evaluate(currentExpression, contextData);
-
-      // Format the result for display
-      return this.createEvaluationHover(currentExpression, result, fhirContext.resourceType);
-
-    } catch (error) {
-      // If evaluation fails, return null to fall back to other hover types
-      console.warn('Expression evaluation failed for hover:', error);
-      return null;
-    }
-  }
-
-  /**
-   * Extract the current FHIRPath expression at the cursor position
-   */
-  private extractCurrentExpression(document: TextDocument, position: Position): string | null {
-    const line = document.getText({
-      start: { line: position.line, character: 0 },
-      end: { line: position.line + 1, character: 0 }
-    }).replace(/\n$/, '');
-
-    // Skip comment lines and context declarations
-    const trimmed = line.trim();
-    if (!trimmed || 
-        trimmed.startsWith('//') || 
-        trimmed.startsWith('/*') ||
-        trimmed.includes('@inputfile') ||
-        trimmed.includes('@input') ||
-        trimmed.includes('@resource')) {
-      return null;
-    }
-
-    // Parse multiple expressions from the line (semicolon-separated)
-    const expressions = this.parseMultipleExpressions(line);
-    
-    // Find which expression the cursor is in
-    for (const expr of expressions) {
-      if (position.character >= expr.startColumn && 
-          position.character <= expr.startColumn + expr.expression.length) {
-        return expr.expression;
-      }
-    }
-
-    // If no specific expression found, return the whole line as fallback
-    return trimmed || null;
-  }
-
-  /**
-   * Parse multiple expressions from a line (handles semicolon separation)
-   */
-  private parseMultipleExpressions(line: string): Array<{expression: string; startColumn: number}> {
-    const expressions: Array<{expression: string; startColumn: number}> = [];
-    
-    let currentExpression = '';
-    let inString = false;
-    let stringChar = '';
-    let expressionStartColumn = 0;
-    let foundFirstNonWhitespace = false;
-    
-    for (let i = 0; i < line.length; i++) {
-      const char = line[i];
-      const prevChar = i > 0 ? line[i - 1] : '';
-      
-      if (!foundFirstNonWhitespace && char !== ' ' && char !== '\t') {
-        expressionStartColumn = i;
-        foundFirstNonWhitespace = true;
-      }
-      
-      if (!inString && (char === '"' || char === "'")) {
-        inString = true;
-        stringChar = char;
-      } else if (inString && char === stringChar && prevChar !== '\\') {
-        inString = false;
-        stringChar = '';
-      } else if (!inString && char === ';') {
-        if (currentExpression.trim()) {
-          expressions.push({
-            expression: currentExpression.trim(),
-            startColumn: expressionStartColumn
-          });
-        }
-        currentExpression = '';
-        foundFirstNonWhitespace = false;
-        
-        let nextStart = i + 1;
-        while (nextStart < line.length && (line[nextStart] === '' || line[nextStart] === '\t')) {
-          nextStart++;
-        }
-        expressionStartColumn = nextStart;
-        continue;
-      }
-      
-      currentExpression += char;
+  private createFunctionHover(func: FHIRPathFunction): MarkupContent {
+    // Parse JSDoc description if available
+    if (func.description.startsWith('/**')) {
+      return this.createHoverFromJSDoc(func);
     }
     
-    if (currentExpression.trim()) {
-      expressions.push({
-        expression: currentExpression.trim(),
-        startColumn: expressionStartColumn
+    // Fallback to old format
+    let content = `\`${func.signature}\` → \`${func.returnType}\`\\n\\n`;
+    content += `${func.description}\\n`;
+    
+    if (func.parameters && func.parameters.length > 0) {
+      content += '\\n**Parameters:**\\n';
+      func.parameters.forEach(param => {
+        if (!param) return;
+        const optional = param.optional ? ' *(optional)*' : '';
+        const name = param.name || 'unknown';
+        const type = param.type || 'any';
+        const shortType = this.shortenType(type);
+        content += `• \`${name}\` \`${shortType}\`${optional}\\n`;
       });
     }
-    
-    if (expressions.length === 0 && line.trim()) {
-      let startCol = 0;
-      for (let i = 0; i < line.length; i++) {
-        if (line[i] !== ' ' && line[i] !== '\t') {
-          startCol = i;
-          break;
-        }
-      }
-      expressions.push({
-        expression: line.trim(),
-        startColumn: startCol
-      });
-    }
-    
-    return expressions;
-  }
 
-
-  /**
-   * Create hover content for expression evaluation
-   */
-  private createEvaluationHover(expression: string, result: any, resourceType?: string): MarkupContent {
-    let content = `**FHIRPath Expression Evaluation**\n\n`;
-    content += `\`${expression}\`\n\n`;
-    
-    if (resourceType) {
-      content += `*Context: ${resourceType}*\n\n`;
-    }
-    
-    // Format the result
-    let resultDisplay = '';
-    if (result === null || result === undefined) {
-      resultDisplay = '*empty*';
-    } else if (Array.isArray(result)) {
-      if (result.length === 0) {
-        resultDisplay = '*empty collection*';
-      } else if (result.length === 1) {
-        resultDisplay = this.formatValue(result[0]);
-      } else {
-        resultDisplay = `Collection with ${result.length} items:\n`;
-        result.slice(0, 5).forEach((item, index) => {
-          resultDisplay += `  ${index + 1}. ${this.formatValue(item)}\n`;
-        });
-        if (result.length > 5) {
-          resultDisplay += `  ... and ${result.length - 5} more items\n`;
-        }
-      }
-    } else {
-      resultDisplay = this.formatValue(result);
-    }
-    
-    content += `**Current Value:**\n\`\`\`\n${resultDisplay}\n\`\`\``;
-    
     return {
       kind: MarkupKind.Markdown,
       value: content
     };
   }
 
-  /**
-   * Format a single value for display
-   */
-  private formatValue(value: any): string {
-    if (value === null) return 'null';
-    if (value === undefined) return 'undefined';
-    if (typeof value === 'string') return `"${value}"`;
-    if (typeof value === 'boolean') return value.toString();
-    if (typeof value === 'number') return value.toString();
-    if (typeof value === 'object') {
-      if (value.resourceType) {
-        return `${value.resourceType}/${value.id || 'unknown'}`;
-      }
-      return JSON.stringify(value, null, 2);
-    }
-    return String(value);
-  }
-
-  private createFunctionHover(func: FHIRPathFunction): MarkupContent {
-    let content = `**${func.signature}**\\n\\n`;
-    content += `${func.description}\\n\\n`;
+  private createHoverFromJSDoc(func: FHIRPathFunction): MarkupContent {
+    const parsed = this.parseJSDoc(func.description);
     
-    if (func.parameters.length > 0) {
-      content += '**Parameters:**\\n';
-      func.parameters.forEach(param => {
-        const optional = param.optional ? ' *(optional)*' : '';
-        content += `- \`${param.name}\` *(${param.type})*${optional}: ${param.description}\\n`;
+    // Build clean format: signature → returnType
+    let content = `\`${func.signature}\` → \`${func.returnType}\`\\n\\n`;
+    
+    // Description
+    content += `${parsed.description}\\n`;
+    
+    // Parameters
+    if (parsed.params.length > 0) {
+      content += '\\n**Parameters:**\\n';
+      parsed.params.forEach(param => {
+        content += `• \`${param.name}\` \`${this.shortenType(param.type)}\`${param.optional ? ' *(optional)*' : ''}\\n`;
       });
-      content += '\\n';
     }
-
-    content += `**Returns:** ${func.returnType}\\n\\n`;
-    content += `**Category:** ${func.category}\\n\\n`;
     
-    if (func.examples.length > 0) {
-      content += '**Examples:**\\n';
-      func.examples.forEach(example => {
-        content += `\`\`\`fhirpath\\n${example}\\n\`\`\`\\n`;
+    // Examples
+    if (parsed.examples.length > 0) {
+      content += '\\n**Examples:**\\n';
+      parsed.examples.forEach(example => {
+        content += `\`${example}\`\\n`;
       });
     }
 
     return {
       kind: MarkupKind.Markdown,
       value: content
+    };
+  }
+
+  private parseJSDoc(jsdoc: string): { description: string; params: Array<{name: string; type: string; optional: boolean}>; examples: string[]; returnType?: string } {
+    const lines = jsdoc.split('\n');
+    let description = '';
+    const params: Array<{name: string; type: string; optional: boolean}> = [];
+    const examples: string[] = [];
+    let returnType: string | undefined;
+    
+    let currentSection = 'description';
+    
+    for (const line of lines) {
+      const trimmed = line.trim();
+      
+      if (trimmed.startsWith('/**') || trimmed === '*/') {
+        continue;
+      }
+      
+      if (trimmed.startsWith('* @param')) {
+        // Parse @param {Type} name? description
+        const match = trimmed.match(/\* @param \{([^}]+)\} (\w+)(\?)?/);
+        if (match) {
+          params.push({
+            name: match[2],
+            type: match[1],
+            optional: !!match[3]
+          });
+        }
+        currentSection = 'param';
+      } else if (trimmed.startsWith('* @returns')) {
+        // Parse @returns {Type}
+        const match = trimmed.match(/\* @returns \{([^}]+)\}/);
+        if (match) {
+          returnType = match[1];
+        }
+        currentSection = 'returns';
+      } else if (trimmed.startsWith('* @example')) {
+        // Parse @example code
+        const example = trimmed.replace('* @example ', '');
+        if (example) {
+          examples.push(example);
+        }
+        currentSection = 'example';
+      } else if (trimmed.startsWith('* ') && currentSection === 'description') {
+        // Description line
+        const text = trimmed.substring(2);
+        if (description) {
+          description += '\\n' + text;
+        } else {
+          description = text;
+        }
+      } else if (trimmed === '*' && currentSection === 'description') {
+        // Empty line in description - add paragraph break
+        if (description && !description.endsWith('\\n\\n')) {
+          description += '\\n\\n';
+        }
+      }
+    }
+    
+    return { 
+      description: description.trim(), 
+      params, 
+      examples, 
+      returnType 
     };
   }
 
   private createOperatorHover(operator: FHIRPathOperator): MarkupContent {
-    let content = `**${operator.name}** (\`${operator.symbol}\`)\\n\\n`;
-    content += `${operator.description}\\n\\n`;
-    content += `**Precedence:** ${operator.precedence}\\n`;
-    content += `**Associativity:** ${operator.associativity}\\n\\n`;
+    // Clean operator header
+    let content = `\`${operator.symbol}\` **${operator.name}**\\n\\n`;
     
+    // Description
+    content += `${operator.description}\\n`;
+    
+    // Compact precedence and associativity info
+    content += `\\n*Precedence: ${operator.precedence}, ${operator.associativity} associative*\\n`;
+    
+    // Examples (more compact)
     if (operator.examples.length > 0) {
-      content += '**Examples:**\\n';
-      operator.examples.forEach(example => {
-        content += `\`\`\`fhirpath\\n${example}\\n\`\`\`\\n`;
+      content += '\\n**Examples:**\\n';
+      operator.examples.slice(0, 2).forEach(example => {
+        content += `\`${example}\`\\n`;
       });
     }
 
@@ -468,6 +345,24 @@ export class HoverProvider {
       kind: MarkupKind.Markdown,
       value: content
     };
+  }
+
+  private shortenType(type: string): string {
+    // Shorten common type unions for better readability
+    if (type.includes('|')) {
+      const types = type.split(' | ').map(t => t.trim());
+      if (types.length > 3) {
+        return `${types.slice(0, 2).join('|')}|...`;
+      }
+      return types.join('|');
+    }
+    
+    // Shorten array notation
+    if (type.endsWith('[]')) {
+      return type.replace('[]', '⎡⎦');
+    }
+    
+    return type;
   }
 
   private createKeywordHover(keyword: any): MarkupContent {
@@ -500,9 +395,11 @@ export class HoverProvider {
       content += `<details>\\n<summary><sub>📝 <strong>Key Properties</strong> (${resourceInfo.commonProperties.length} total)</sub></summary>\\n\\n`;
       
       keyProps.forEach((prop: any) => {
+        if (!prop) return; // Skip if prop is undefined
         const badge = this.getCompactTypeBadge(prop.type);
         const reqBadge = prop.required ? '⚠️' : '';
-        content += `<sub>• **\`${prop.name}\`** ${badge}${reqBadge} — ${this.truncateText(prop.description, 60)}</sub>\\n`;
+        const description = prop.description || 'No description available';
+        content += `<sub>• **\`${prop.name || 'unknown'}\`** ${badge}${reqBadge} — ${this.truncateText(description, 60)}</sub>\\n`;
       });
       
       if (resourceInfo.commonProperties.length > 4) {
@@ -604,23 +501,16 @@ export class HoverProvider {
     return match && this.isFHIRResourceType(match[1]) ? match[1] : null;
   }
 
-  /**
-   * Extract resource type from a FHIRPath expression for validation
-   */
-  private extractResourceTypeFromExpression(expression: string): string | null {
-    // Match expressions that start with a resource type like "Patient.name", "Observation.value", etc.
-    const match = expression.trim().match(/^([A-Z][a-zA-Z0-9]*)\./);
-    if (match) {
-      const resourceType = match[1];
-      return this.isFHIRResourceType(resourceType) ? resourceType : null;
-    }
-    return null;
-  }
 
   /**
    * Get a type badge for display formatting
    */
-  private getTypeBadge(type: string): string {
+  private getTypeBadge(type: string | undefined): string {
+    // Handle undefined or null type
+    if (!type) {
+      return '⚙️ `unknown`';
+    }
+
     const typeBadges: Record<string, string> = {
       'boolean': '🔲 `boolean`',
       'string': '📝 `string`',
@@ -684,7 +574,12 @@ export class HoverProvider {
   /**
    * Get a compact type badge for smaller displays
    */
-  private getCompactTypeBadge(type: string): string {
+  private getCompactTypeBadge(type: string | undefined): string {
+    // Handle undefined or null type
+    if (!type) {
+      return '⚙️';
+    }
+
     const compactBadges: Record<string, string> = {
       'boolean': '🔲',
       'string': '📝',

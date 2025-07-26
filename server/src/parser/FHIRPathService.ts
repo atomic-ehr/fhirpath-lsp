@@ -1,4 +1,8 @@
-import {parse, evaluate, compile, analyze, TokenType, NodeType} from '@atomic-ehr/fhirpath';
+import {
+  parseLegacy,
+  compile,
+  analyze
+} from '@atomic-ehr/fhirpath';
 import type {
   FHIRPathExpression,
   AnalysisResult,
@@ -22,6 +26,7 @@ export interface ParseError {
   length: number;
   code?: string;
 }
+
 
 // Local token type for LSP semantic highlighting
 export interface Token {
@@ -52,10 +57,8 @@ export class FHIRPathService {
     }
 
     try {
-      // Parse the expression using @atomic-ehr/fhirpath
-      const parsedExpression = parse(expression);
-
-      // TODO: Implement token extraction for syntax highlighting when needed
+      // Parse the expression using @atomic-ehr/fhirpath legacy parser
+      const parsedExpression = parseLegacy(expression);
 
       const result: ParseResult = {
         success: true,
@@ -115,101 +118,7 @@ export class FHIRPathService {
     }
   }
 
-  /**
-   * Extract tokens from AST for semantic highlighting
-   */
-  private extractTokensFromAST(ast: ASTNode, expression: string): Token[] {
-    const tokens: Token[] = [];
 
-    const walkAST = (node: ASTNode) => {
-      if (!node || !node.position) return;
-
-      let tokenType: TokenType | null = null;
-      let value = '';
-
-      // Map AST node types to token types based on @atomic-ehr/fhirpath AST structure
-      switch (node.type) {
-        case NodeType.Identifier:
-          tokenType = TokenType.IDENTIFIER;
-          value = this.getTextAtPosition(expression, node.position, 'identifier');
-          break;
-
-        case NodeType.TypeOrIdentifier:
-          tokenType = TokenType.IDENTIFIER; // Use IDENTIFIER for type references too
-          value = this.getTextAtPosition(expression, node.position, 'type');
-          break;
-
-        case NodeType.Function:
-          tokenType = TokenType.IDENTIFIER; // Functions are identifiers in the lexer
-          value = this.getTextAtPosition(expression, node.position, 'function');
-          break;
-
-        case NodeType.Literal:
-          // Determine the literal type from the node value
-          tokenType = TokenType.STRING; // Default, should be refined based on literal type
-          value = this.getTextAtPosition(expression, node.position, 'literal');
-          break;
-
-        case NodeType.Binary:
-        case NodeType.Unary:
-          // These are operators, map to appropriate operator tokens
-          tokenType = TokenType.PLUS; // Default, should be refined based on actual operator
-          value = this.getTextAtPosition(expression, node.position, 'operator');
-          break;
-      }
-
-      if (tokenType && value) {
-        tokens.push({
-          type: tokenType.toString(), // Convert TokenType enum to string
-          value,
-          start: node.position.offset,
-          end: node.position.offset + value.length,
-          line: node.position.line - 1, // LSP uses 0-based lines
-          column: node.position.column - 1 // LSP uses 0-based columns
-        });
-      }
-
-      // Recursively walk child nodes
-      if ('children' in node && Array.isArray(node.children)) {
-        for (const child of node.children) {
-          if (child) walkAST(child);
-        }
-      }
-
-      // Handle specific node structures based on the actual ASTNode structure
-      const nodeWithStructure = node as any; // Cast to any to access dynamic properties
-      if (nodeWithStructure.left) walkAST(nodeWithStructure.left);
-      if (nodeWithStructure.right) walkAST(nodeWithStructure.right);
-      if (nodeWithStructure.operand) walkAST(nodeWithStructure.operand);
-      if (nodeWithStructure.arguments && Array.isArray(nodeWithStructure.arguments)) {
-        for (const arg of nodeWithStructure.arguments) {
-          if (arg) walkAST(arg);
-        }
-      }
-    };
-
-    walkAST(ast);
-
-    // Sort tokens by position
-    return tokens.sort((a, b) => a.start - b.start);
-  }
-
-  /**
-   * Extract text at a specific position from the expression
-   */
-  private getTextAtPosition(expression: string, position: Position, nodeType: string): string {
-    // This is a simplified implementation
-    // In a real implementation, we'd need to track the exact text spans
-    const start = position.offset;
-
-    // Try to find word boundaries for the token
-    let end = start;
-    while (end < expression.length && /\w/.test(expression[end])) {
-      end++;
-    }
-
-    return expression.substring(start, end) || nodeType;
-  }
 
   /**
    * Convert exception to structured parse error
@@ -260,6 +169,7 @@ export class FHIRPathService {
       column: lines[lines.length - 1].length
     };
   }
+
 
   /**
    * Clear caches (useful for memory management)

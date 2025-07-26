@@ -30,9 +30,28 @@ import { DefinitionProvider } from './providers/DefinitionProvider';
 import { ReferencesProvider } from './providers/ReferencesProvider';
 import { WorkspaceSymbolProvider } from './providers/WorkspaceSymbolProvider';
 import { RefactoringProvider } from './providers/RefactoringProvider';
+import { InlayHintProvider } from './providers/InlayHintProvider';
+
+// Production server infrastructure
+import { ProductionServerManager, ServerManager } from './services/ServerManager';
+import { ProductionErrorBoundary, ConsoleErrorReporter } from './services/ErrorBoundary';
+import { ProductionResourceMonitor } from './services/ResourceMonitor';
+import { ProductionHealthChecker } from './services/HealthChecker';
 
 // Create a connection for the server
 const connection = createConnection(ProposedFeatures.all);
+
+// Initialize production infrastructure
+const errorReporter = new ConsoleErrorReporter(connection);
+const errorBoundary = new ProductionErrorBoundary(connection, errorReporter);
+const resourceMonitor = new ProductionResourceMonitor(connection);
+const healthChecker = new ProductionHealthChecker(connection);
+const serverManager = new ProductionServerManager(
+  connection,
+  errorBoundary,
+  resourceMonitor,
+  healthChecker
+);
 
 // Create a text document manager
 const documents: TextDocuments<TextDocument> = new TextDocuments(TextDocument);
@@ -60,6 +79,9 @@ const workspaceSymbolProvider = new WorkspaceSymbolProvider(connection, symbolSe
 // Refactoring provider
 const refactoringProvider = new RefactoringProvider(symbolService, fhirPathService);
 
+// Inlay hint provider
+const inlayHintProvider = new InlayHintProvider(fhirPathService, fhirPathContextService);
+
 // Token types for semantic highlighting
 const tokenTypes = [
   'function',
@@ -84,8 +106,47 @@ const tokenModifiers = [
 ];
 
 // Server initialization
-connection.onInitialize((params: InitializeParams): InitializeResult => {
+connection.onInitialize(async (params: InitializeParams): Promise<InitializeResult> => {
   connection.console.log('FHIRPath Language Server initializing...');
+  
+  try {
+    // Start the production server manager
+    await serverManager.start();
+    
+    // Add cleanup handlers for server shutdown
+    serverManager.addShutdownHandler(async () => {
+      connection.console.log('Cleaning up services...');
+      // Clear any intervals or timers
+      // Close any open file handles
+      // Cleanup service caches
+    });
+    
+    // Add cleanup for workspace symbol provider
+    serverManager.addShutdownHandler(async () => {
+      try {
+        // Cleanup workspace symbol provider if method exists
+        const provider = workspaceSymbolProvider as any;
+        if (provider && typeof provider.cleanup === 'function') {
+          await provider.cleanup();
+        }
+      } catch (error) {
+        connection.console.error(`Error cleaning up workspace symbol provider: ${error}`);
+      }
+    });
+    
+    // Add cleanup for diagnostic provider
+    serverManager.addShutdownHandler(async () => {
+      try {
+        diagnosticProvider.clearValidationTimeout?.("*");
+      } catch (error) {
+        connection.console.error(`Error cleaning up diagnostic provider: ${error}`);
+      }
+    });
+    
+  } catch (error) {
+    connection.console.error(`Failed to start server manager: ${error}`);
+    // Continue with basic initialization even if server manager fails
+  }
 
   return {
     capabilities: {
@@ -146,7 +207,12 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
 
       // Phase 4: Document formatting support
       documentFormattingProvider: true,
-      documentRangeFormattingProvider: true
+      documentRangeFormattingProvider: true,
+      
+      // Inlay hints for expression evaluation
+      inlayHintProvider: {
+        resolveProvider: false
+      }
     }
   };
 });
@@ -154,6 +220,9 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
 // Server initialized
 connection.onInitialized(async () => {
   connection.console.log('FHIRPath Language Server initialized successfully');
+  
+  // Track connection for resource monitoring
+  resourceMonitor.trackConnection('connect');
 
   // Initialize workspace symbol provider if workspace folders are available
   try {
@@ -170,7 +239,17 @@ connection.onInitialized(async () => {
 // Document change handling
 documents.onDidChangeContent(async (change) => {
   connection.console.log(`Document changed: ${change.document.uri}`);
-  await validateTextDocument(change.document);
+  
+  try {
+    await validateTextDocument(change.document);
+  } catch (error) {
+    errorBoundary.handleError(error as Error, {
+      operation: 'document_validation',
+      documentUri: change.document.uri,
+      timestamp: new Date(),
+      severity: 'medium'
+    });
+  }
 
   // Update workspace symbol index for changed document
   if (change.document.uri.endsWith('.fhirpath')) {
@@ -182,7 +261,7 @@ documents.onDidChangeContent(async (change) => {
   }
 });
 
-// Document validation
+// Document validation with error boundary
 async function validateTextDocument(textDocument: TextDocument): Promise<void> {
   try {
     const diagnostics = await diagnosticProvider.provideDiagnostics(textDocument);
@@ -191,7 +270,18 @@ async function validateTextDocument(textDocument: TextDocument): Promise<void> {
       diagnostics
     });
   } catch (error) {
-    connection.console.error(`Error validating document: ${error}`);
+    errorBoundary.handleError(error as Error, {
+      operation: 'provide_diagnostics',
+      documentUri: textDocument.uri,
+      timestamp: new Date(),
+      severity: 'medium'
+    });
+    
+    // Send empty diagnostics to clear any previous errors
+    connection.sendDiagnostics({
+      uri: textDocument.uri,
+      diagnostics: []
+    });
   }
 }
 
@@ -225,7 +315,7 @@ connection.onRequest('textDocument/semanticTokens/range', async (params) => {
   }
 });
 
-// Completion provider
+// Completion provider with error boundary
 connection.onCompletion(async (params) => {
   try {
     connection.console.log(`Completion request: ${JSON.stringify({
@@ -245,12 +335,17 @@ connection.onCompletion(async (params) => {
     connection.console.log(`Completion result: ${result.length} items`);
     return result;
   } catch (error) {
-    connection.console.error(`Error providing completions: ${error}`);
+    errorBoundary.handleError(error as Error, {
+      operation: 'provide_completions',
+      documentUri: params.textDocument.uri,
+      timestamp: new Date(),
+      severity: 'low'
+    });
     return [];
   }
 });
 
-// Hover provider
+// Hover provider with error boundary
 connection.onHover(async (params) => {
   try {
     const document = documents.get(params.textDocument.uri);
@@ -260,12 +355,17 @@ connection.onHover(async (params) => {
 
     return await hoverProvider.provideHover(document, params);
   } catch (error) {
-    connection.console.error(`Error providing hover: ${error}`);
+    errorBoundary.handleError(error as Error, {
+      operation: 'provide_hover',
+      documentUri: params.textDocument.uri,
+      timestamp: new Date(),
+      severity: 'low'
+    });
     return null;
   }
 });
 
-// Code action provider
+// Code action provider with error boundary
 connection.onCodeAction(async (params) => {
   try {
     connection.console.log(`Code action request received for ${params.textDocument.uri}`);
@@ -293,7 +393,12 @@ connection.onCodeAction(async (params) => {
 
     return actions;
   } catch (error) {
-    connection.console.error(`Error providing code actions: ${error}`);
+    errorBoundary.handleError(error as Error, {
+      operation: 'provide_code_actions',
+      documentUri: params.textDocument.uri,
+      timestamp: new Date(),
+      severity: 'medium'
+    });
     return [];
   }
 });
@@ -475,8 +580,18 @@ connection.onRenameRequest(async (params) => {
 });
 
 // Shutdown handling
-connection.onShutdown(() => {
+connection.onShutdown(async () => {
   connection.console.log('FHIRPath Language Server shutting down');
+  
+  try {
+    // Track connection disconnect
+    resourceMonitor.trackConnection('disconnect');
+    
+    // Graceful shutdown through server manager
+    await serverManager.stop();
+  } catch (error) {
+    connection.console.error(`Error during shutdown: ${error}`);
+  }
 });
 
 // Listen for document events
@@ -484,5 +599,57 @@ documents.listen(connection);
 
 // Start listening for connections
 connection.listen();
+
+// Add custom health check endpoint
+connection.onRequest('fhirpath/health', () => {
+  try {
+    const health = serverManager.getHealth();
+    const state = serverManager.getState();
+    
+    return {
+      status: health.status,
+      state,
+      uptime: health.uptime,
+      memory: health.memoryUsage,
+      cpu: health.cpuUsage,
+      connections: health.activeConnections,
+      services: health.services,
+      timestamp: new Date().toISOString()
+    };
+  } catch (error) {
+    return {
+      status: 'unhealthy',
+      error: (error as Error).message,
+      timestamp: new Date().toISOString()
+    };
+  }
+});
+
+// Add resource stats endpoint
+connection.onRequest('fhirpath/resources', () => {
+  try {
+    return resourceMonitor.getResourceStats();
+  } catch (error) {
+    return {
+      error: (error as Error).message,
+      timestamp: new Date().toISOString()
+    };
+  }
+});
+
+// Inlay hint provider
+connection.onRequest('textDocument/inlayHint', async (params) => {
+  try {
+    const document = documents.get(params.textDocument.uri);
+    if (!document) {
+      return [];
+    }
+
+    return await inlayHintProvider.provideInlayHints(document, params);
+  } catch (error) {
+    connection.console.error(`Error providing inlay hints: ${error}`);
+    return [];
+  }
+});
 
 connection.console.log('FHIRPath Language Server started and listening...');

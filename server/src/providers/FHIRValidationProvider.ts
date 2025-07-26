@@ -300,20 +300,7 @@ export class FHIRValidationProvider {
             // The fact that evaluation succeeded means the expression is valid for this context
             console.log(`Expression "${expression.substring(0, 50)}..." evaluated successfully, result:`, result);
 
-            // Add informational diagnostic showing the evaluation result
-            if (result !== undefined && result !== null) {
-              const resultStr = Array.isArray(result) ? `[${result.length} items]` : String(result);
-              diagnostics.push({
-                severity: DiagnosticSeverity.Information,
-                range: {
-                  start: { line, character: column },
-                  end: { line, character: column + expression.length }
-                },
-                message: `Expression evaluates to: ${resultStr}`,
-                source: 'fhirpath-lsp',
-                code: 'evaluation-result'
-              });
-            }
+            // Evaluation successful - no diagnostic needed since inlay hints show the result
 
           } catch (evalError: any) {
             // Expression failed to evaluate against the context data

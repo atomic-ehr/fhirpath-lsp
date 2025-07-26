@@ -178,17 +178,28 @@ export class CodeActionProvider implements ICodeActionProvider {
    */
   private getProvidersForKind(kind: string): CodeActionRegistration[] {
     const providers: CodeActionRegistration[] = [];
+    const seenProviders = new Set<any>(); // Track providers to avoid duplicates
 
     // Get exact matches
     const exactMatch = this.registrations.get(kind);
     if (exactMatch) {
-      providers.push(...exactMatch);
+      for (const registration of exactMatch) {
+        if (!seenProviders.has(registration.provider)) {
+          providers.push(registration);
+          seenProviders.add(registration.provider);
+        }
+      }
     }
 
     // Get parent kind matches (e.g., "quickfix" matches "quickfix.function")
     for (const [registeredKind, registrations] of this.registrations.entries()) {
       if (kind.startsWith(registeredKind + '.') || registeredKind.startsWith(kind + '.')) {
-        providers.push(...registrations);
+        for (const registration of registrations) {
+          if (!seenProviders.has(registration.provider)) {
+            providers.push(registration);
+            seenProviders.add(registration.provider);
+          }
+        }
       }
     }
 
@@ -279,8 +290,36 @@ export class CodeActionProvider implements ICodeActionProvider {
       });
     }
 
+    // Remove duplicates based on title and kind
+    const seenActions = new Map<string, FHIRPathCodeAction>();
+    const deduplicatedActions: FHIRPathCodeAction[] = [];
+    
+    for (const action of filteredActions) {
+      const key = `${action.kind}_${action.title}`;
+      const existing = seenActions.get(key);
+      
+      if (!existing) {
+        // First time seeing this action
+        seenActions.set(key, action);
+        deduplicatedActions.push(action);
+      } else {
+        // Keep the action with higher priority
+        const actionPriority = action.priority || 0;
+        const existingPriority = existing.priority || 0;
+        
+        if (actionPriority > existingPriority) {
+          // Replace with higher priority action
+          const index = deduplicatedActions.indexOf(existing);
+          if (index >= 0) {
+            deduplicatedActions[index] = action;
+            seenActions.set(key, action);
+          }
+        }
+      }
+    }
+
     // Sort by priority (highest first), then by preference, then alphabetically
-    filteredActions.sort((a, b) => {
+    deduplicatedActions.sort((a, b) => {
       // Priority
       const priorityA = a.priority || 0;
       const priorityB = b.priority || 0;
@@ -299,7 +338,7 @@ export class CodeActionProvider implements ICodeActionProvider {
       return a.title.localeCompare(b.title);
     });
 
-    return filteredActions;
+    return deduplicatedActions;
   }
 
   /**
