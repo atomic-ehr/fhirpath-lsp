@@ -1,5 +1,5 @@
 import {
-  parseLegacy,
+  parse,
   compile,
   analyze
 } from '@atomic-ehr/fhirpath';
@@ -7,7 +7,14 @@ import type {
   FHIRPathExpression,
   AnalysisResult,
   ASTNode,
-  Position
+  Position,
+  ParseResult as FHIRPathParseResult,
+  ParseDiagnostic,
+  TextRange,
+  EvaluationContext,
+  CompileOptions,
+  AnalyzeOptions,
+  CompiledExpression
 } from '@atomic-ehr/fhirpath';
 
 // Types for parser integration
@@ -39,6 +46,30 @@ export interface Token {
 }
 
 /**
+ * Simple FHIRPathExpression implementation for LSP use
+ */
+class SimpleFHIRPathExpression implements FHIRPathExpression {
+  constructor(public readonly ast: ASTNode, private source: string) {}
+  
+  evaluate(input?: any, context?: EvaluationContext): any[] {
+    // For LSP, we don't need evaluation - delegate to main API
+    throw new Error('Evaluation not supported in LSP mode');
+  }
+  
+  compile(options?: CompileOptions): CompiledExpression {
+    return compile(this.source, options);
+  }
+  
+  analyze(options?: AnalyzeOptions): AnalysisResult {
+    return analyze(this.source, options);
+  }
+  
+  toString(): string {
+    return this.source;
+  }
+}
+
+/**
  * Service for integrating with @atomic-ehr/fhirpath parser
  * Provides abstraction layer for LSP integration
  */
@@ -57,13 +88,26 @@ export class FHIRPathService {
     }
 
     try {
-      // Parse the expression using @atomic-ehr/fhirpath legacy parser
-      const parsedExpression = parseLegacy(expression);
+      // Parse the expression using @atomic-ehr/fhirpath parser
+      const parseResult = parse(expression);
 
+      // Check if parse has errors
+      if (parseResult.hasErrors) {
+        const errors = parseResult.diagnostics.map(diag => this.convertDiagnosticToError(diag, expression));
+        const result: ParseResult = {
+          success: false,
+          errors
+        };
+        
+        // Don't cache failed parses as they might be temporary during editing
+        return result;
+      }
+
+      // Create successful result
       const result: ParseResult = {
         success: true,
-        expression: parsedExpression,
-        ast: parsedExpression.ast,
+        expression: new SimpleFHIRPathExpression(parseResult.ast, expression),
+        ast: parseResult.ast,
         errors: []
       };
 
@@ -118,7 +162,37 @@ export class FHIRPathService {
     }
   }
 
+  /**
+   * Convert ParseDiagnostic to ParseError for LSP compatibility
+   */
+  private convertDiagnosticToError(diagnostic: ParseDiagnostic, expression: string): ParseError {
+    const range = diagnostic.range;
+    const startOffset = this.lineColumnToOffset(expression, range.start.line, range.start.character);
+    const endOffset = this.lineColumnToOffset(expression, range.end.line, range.end.character);
+    
+    return {
+      message: diagnostic.message,
+      line: range.start.line,
+      column: range.start.character,
+      offset: startOffset,
+      length: endOffset - startOffset,
+      code: diagnostic.code || 'fhirpath-parse-error'
+    };
+  }
 
+  /**
+   * Convert line/column position to text offset
+   */
+  private lineColumnToOffset(text: string, line: number, column: number): number {
+    const lines = text.split('\n');
+    let offset = 0;
+    
+    for (let i = 0; i < line && i < lines.length; i++) {
+      offset += lines[i].length + 1; // +1 for newline character
+    }
+    
+    return offset + column;
+  }
 
   /**
    * Convert exception to structured parse error

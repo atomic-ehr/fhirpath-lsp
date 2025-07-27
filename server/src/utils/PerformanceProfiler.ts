@@ -58,13 +58,13 @@ export class PerformanceProfiler {
 
     const start = this.marks.get(startMark);
     if (!start) {
-      console.warn(`Performance mark '${startMark}' not found`);
+      // Let the caller handle logging - no console.warn here
       return null;
     }
 
     const endTime = endMark ? this.marks.get(endMark)?.timestamp : performance.now();
     if (!endTime) {
-      console.warn(`Performance mark '${endMark}' not found`);
+      // Let the caller handle logging - no console.warn here
       return null;
     }
 
@@ -78,12 +78,9 @@ export class PerformanceProfiler {
 
     this.measures.push(measure);
 
-    // Check threshold
-    const threshold = this.thresholds.get(name);
-    if (threshold && measure.duration > threshold) {
-      console.warn(`Performance warning: ${name} took ${measure.duration.toFixed(2)}ms (threshold: ${threshold}ms)`);
-    }
-
+    // Remove console.warn - let the structured logging system handle performance warnings
+    // This will be handled by the PerformanceMonitor
+    
     return measure;
   }
 

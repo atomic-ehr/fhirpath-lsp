@@ -22,6 +22,7 @@ A comprehensive Language Server Protocol implementation for FHIRPath with VS Cod
 - **Live Expression Evaluation** - Real-time evaluation in hover when context data is available
 - **Rich Formatting** - Markdown documentation with collapsible sections and visual badges
 - **Context Analysis** - Document-level context parsing and intelligent validation
+- **Centralized Configuration** - Unified configuration management with type safety and validation
 
 ## 📁 Project Structure
 
@@ -94,6 +95,84 @@ fhirpath-lsp/
    ```bash
    bun run dev
    ```
+
+## ⚙️ Configuration
+
+The FHIRPath LSP server uses a centralized configuration system that supports multiple configuration sources with automatic validation and type safety.
+
+### Configuration Sources (in priority order)
+
+1. **Workspace Configuration** - `.fhirpath-lsp.json` in your project root
+2. **User Configuration** - `~/.fhirpath-lsp/config.json`
+3. **Environment Variables** - `FHIRPATH_LSP_*` prefixed variables
+4. **Runtime Configuration** - Dynamic updates via LSP
+
+### Example Configuration
+
+Create a `.fhirpath-lsp.json` file in your workspace root:
+
+```json
+{
+  "diagnostics": {
+    "enabled": true,
+    "performance": {
+      "maxComplexity": 15,
+      "maxNestingDepth": 6,
+      "flagRedundantOperations": true
+    },
+    "codeQuality": {
+      "maxLineLength": 120,
+      "flagMagicValues": true
+    },
+    "fhirBestPractices": {
+      "enforceTypeSafety": true,
+      "checkCardinality": true
+    }
+  },
+  "providers": {
+    "completion": {
+      "maxSuggestions": 75,
+      "includeSnippets": true
+    },
+    "hover": {
+      "includeExamples": true,
+      "maxContentLength": 1200
+    },
+    "performance": {
+      "requestThrottling": {
+        "enabled": true,
+        "configs": [
+          {
+            "requestType": "completion",
+            "limit": 15,
+            "windowMs": 1000
+          }
+        ]
+      }
+    }
+  }
+}
+```
+
+### Environment Variables
+
+You can also configure the server using environment variables:
+
+```bash
+# Diagnostic configuration
+export FHIRPATH_LSP_DIAGNOSTICS_PERFORMANCE_MAX_COMPLEXITY=20
+export FHIRPATH_LSP_DIAGNOSTICS_CODE_QUALITY_MAX_LINE_LENGTH=120
+
+# Provider configuration
+export FHIRPATH_LSP_PROVIDERS_COMPLETION_MAX_SUGGESTIONS=100
+export FHIRPATH_LSP_PROVIDERS_HOVER_INCLUDE_EXAMPLES=true
+```
+
+### Configuration Validation
+
+The system automatically validates all configuration values and provides helpful error messages for invalid settings. Configuration changes are applied in real-time without requiring a server restart.
+
+For complete configuration documentation, see [server/src/config/README.md](server/src/config/README.md).
 
 ## 🐛 Local Development & Debugging
 

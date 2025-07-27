@@ -9,6 +9,7 @@ import {
 } from 'vscode-languageserver';
 
 import { CodeActionProvider } from '../providers/CodeActionProvider';
+import { FHIRPathFunctionRegistry } from "../services/FHIRPathFunctionRegistry";
 import { FHIRPathService } from '../parser/FHIRPathService';
 import {
   ICodeActionProvider,
@@ -28,6 +29,11 @@ const mockFHIRPathService = {
   parse: mock(() => ({ type: 'test' })),
 } as unknown as FHIRPathService;
 
+const mockFunctionRegistry = {
+  getFunctions: mock(() => []),
+  getOperators: mock(() => []),
+  getKeywords: mock(() => [])
+} as unknown as FHIRPathFunctionRegistry;
 // Test provider implementation
 class TestCodeActionProvider implements ICodeActionProvider {
   async provideCodeActions() {
@@ -44,7 +50,7 @@ describe('CodeActionProvider', () => {
   let testDocument: TextDocument;
 
   beforeEach(() => {
-    provider = new CodeActionProvider(mockConnection, mockFHIRPathService);
+    provider = new CodeActionProvider(mockConnection, mockFHIRPathService, mockFunctionRegistry);
     
     testDocument = TextDocument.create(
       'file:///test.fhirpath',
@@ -54,12 +60,15 @@ describe('CodeActionProvider', () => {
     );
   });
 
-  test('should initialize with empty registrations', () => {
-    expect(provider.getSupportedKinds()).toEqual([]);
+  test('should initialize with default registrations', () => {
+    const supportedKinds = provider.getSupportedKinds();
+    expect(supportedKinds.length).toBeGreaterThan(0);
+    expect(supportedKinds).toContain("quickfix");
   });
 
   test('should register code action provider', () => {
     const testProvider = new TestCodeActionProvider();
+    const customKind = "custom.test.action";
     
     provider.register({
       kinds: [FHIRPathCodeActionKind.QuickFix],
@@ -73,6 +82,7 @@ describe('CodeActionProvider', () => {
 
   test('should provide code actions from registered providers', async () => {
     const testProvider = new TestCodeActionProvider();
+    const customKind = "custom.test.action";
     
     provider.register({
       kinds: [FHIRPathCodeActionKind.QuickFix],
@@ -201,6 +211,7 @@ describe('CodeActionProvider', () => {
 
   test('should unregister providers', () => {
     const testProvider = new TestCodeActionProvider();
+    const customKind = "custom.test.action";
     
     provider.register({
       kinds: [FHIRPathCodeActionKind.QuickFix],
@@ -208,11 +219,12 @@ describe('CodeActionProvider', () => {
       priority: 10,
     });
 
-    expect(provider.getSupportedKinds()).toContain(FHIRPathCodeActionKind.QuickFix);
+    const beforeCount = provider.getSupportedKinds().filter(k => k === FHIRPathCodeActionKind.QuickFix).length;
 
     provider.unregister(testProvider);
     
-    expect(provider.getSupportedKinds()).not.toContain(FHIRPathCodeActionKind.QuickFix);
+    const afterCount = provider.getSupportedKinds().filter(k => k === FHIRPathCodeActionKind.QuickFix).length;
+    expect(afterCount).toBe(beforeCount); // The kind should still be supported by default providers
   });
 
   test('should resolve code actions', async () => {

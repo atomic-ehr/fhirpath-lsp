@@ -240,7 +240,7 @@ export class HoverProvider {
     if (parsed.params.length > 0) {
       content += '\\n**Parameters:**\\n';
       parsed.params.forEach(param => {
-        content += `• \`${param.name}\` \`${this.shortenType(param.type)}\`${param.optional ? ' *(optional)*' : ''}\\n`;
+        content += `• \`${param.name}\` \`${this.shortenType(param.type || 'any')}\`${param.optional ? ' *(optional)*' : ''}\\n`;
       });
     }
     

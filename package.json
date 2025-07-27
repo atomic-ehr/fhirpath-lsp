@@ -1,5 +1,5 @@
 {
-  "name": "fhirpath-lsp",
+  "name": "@atomic-ehr/fhirpath-lsp",
   "version": "0.1.0",
   "description": "FHIRPath Language Support",
   "displayName": "FHIRPath Language Support",
@@ -51,7 +51,7 @@
     "prettier": "^3.2.4"
   },
   "dependencies": {
-    "@atomic-ehr/fhirpath": "latest"
+    "@atomic-ehr/fhirpath": "file:../fhirpath"
   },
   "repository": {
     "type": "git",
@@ -68,8 +68,14 @@
     "languages": [
       {
         "id": "fhirpath",
-        "aliases": ["FHIRPath", "fhirpath"],
-        "extensions": [".fhirpath", ".fhir"],
+        "aliases": [
+          "FHIRPath",
+          "fhirpath"
+        ],
+        "extensions": [
+          ".fhirpath",
+          ".fhir"
+        ],
         "configuration": "./language-configuration.json"
       }
     ],
@@ -93,7 +99,11 @@
         "fhirpath.trace.server": {
           "scope": "window",
           "type": "string",
-          "enum": ["off", "messages", "verbose"],
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
           "default": "off",
           "description": "Traces the communication between VS Code and the language server"
         }

@@ -52,7 +52,7 @@ export function createSourceActionProviders(
     },
   ];
 
-  connection.console.log(`Created ${registrations.length} source action providers`);
+  connection?.console?.log(`Created ${registrations.length} source action providers`);
   
   return registrations;
 }

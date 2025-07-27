@@ -1,5 +1,5 @@
 {
-  "name": "fhirpath-lsp-server",
+  "name": "@atomic-ehr/fhirpath-lsp-server",
   "version": "0.1.0",
   "description": "FHIRPath Language Server",
   "main": "out/server.js",
@@ -15,7 +15,7 @@
     "lru-cache": "^11.1.0",
     "vscode-languageserver": "^9.0.1",
     "vscode-languageserver-textdocument": "^1.0.11",
-    "pidusage": "^3.0.2",
+    "pidusage": "^4.0.1",
     "graceful-fs": "^4.2.11"
   },
   "devDependencies": {

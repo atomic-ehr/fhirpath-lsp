@@ -24,6 +24,11 @@ import { FHIRResourceService } from './services/FHIRResourceService';
 import { FHIRPathContextService } from './services/FHIRPathContextService';
 import { FHIRPathFunctionRegistry } from './services/FHIRPathFunctionRegistry';
 import { CodeActionProvider } from './providers/CodeActionProvider';
+
+// Plugin system
+import { PluginManager, PluginSource } from './plugins/PluginManager';
+import { CoreProvidersPlugin } from './plugins/builtin/CoreProvidersPlugin';
+import { PerformanceAnalyzerPlugin } from './plugins/builtin/PerformanceAnalyzerPlugin';
 import { SymbolService } from './services/SymbolService';
 import { DocumentSymbolProvider } from './providers/DocumentSymbolProvider';
 import { DefinitionProvider } from './providers/DefinitionProvider';
@@ -43,10 +48,75 @@ import { getMemoryManager } from './services/MemoryManager';
 import { getBackgroundProcessor } from './services/BackgroundProcessor';
 import { AdaptiveRequestThrottler } from './services/RequestThrottler';
 import { getGlobalProfiler } from './utils/PerformanceProfiler';
+import { getPerformanceMonitor } from './logging/PerformanceMonitor';
 import { WorkspaceOptimizer, categorizeWorkspace } from './utils/WorkspaceOptimizer';
+
+// Centralized configuration system
+import { ConfigManager, DEFAULT_APP_CONFIG } from './config/ConfigManager';
+import { ConfigNotificationService } from './config/ConfigNotificationService';
+import { FileConfigLoaderFactory } from './config/loaders/FileConfigLoader';
+import { EnvironmentConfigLoaderFactory } from './config/loaders/EnvironmentConfigLoader';
+import { RuntimeConfigLoaderFactory } from './config/loaders/RuntimeConfigLoader';
+import { DiagnosticConfigValidator } from './config/validators/DiagnosticConfigValidator';
+import { ProviderConfigValidator } from './config/validators/ProviderConfigValidator';
+import { CompositeConfigValidator } from './config/validators/ConfigValidator';
+import { DiagnosticConfigAdapter } from './config/adapters/DiagnosticConfigAdapter';
+import { PluginConfigValidator } from './config/validators/PluginConfigValidator';
+import { PluginConfigAdapter } from './config/adapters/PluginConfigAdapter';
+
+// Structured logging system
+import { getLogger, configureLogging, LogLevel, correlationContext, requestContext } from './logging';
+import { join } from 'path';
 
 // Create a connection for the server
 const connection = createConnection(ProposedFeatures.all);
+
+// Configure structured logging
+configureLogging({
+  level: LogLevel.INFO,
+  transports: [
+    {
+      type: 'console',
+      name: 'server-console',
+      level: LogLevel.INFO,
+      enabled: true,
+      options: {
+        colorize: false, // LSP output should not have colors
+        includeTimestamp: true,
+        includeContext: true,
+        includeSource: false
+      }
+    },
+    {
+      type: 'file',
+      name: 'server-file',
+      level: LogLevel.DEBUG,
+      enabled: true,
+      options: {
+        filePath: join(process.cwd(), 'logs', 'fhirpath-lsp.log'),
+        maxSize: 10 * 1024 * 1024, // 10MB
+        maxFiles: 5
+      }
+    }
+  ],
+  correlationId: {
+    enabled: true,
+    generator: 'short'
+  },
+  context: {
+    includeSource: false,
+    includePerformance: true,
+    defaultTags: ['fhirpath-lsp', 'server']
+  },
+  performance: {
+    enableTimers: true,
+    enableMemoryTracking: true,
+    enableCpuTracking: false
+  }
+});
+
+// Create the main server logger
+const logger = getLogger('server');
 
 // Initialize production infrastructure
 const errorReporter = new ConsoleErrorReporter(connection);
@@ -59,6 +129,12 @@ const memoryManager = getMemoryManager();
 const backgroundProcessor = getBackgroundProcessor();
 const requestThrottler = new AdaptiveRequestThrottler();
 const profiler = getGlobalProfiler();
+const performanceMonitor = getPerformanceMonitor({
+  enabled: true,
+  logLevel: LogLevel.INFO,
+  memoryTracking: true,
+  cpuTracking: false
+});
 const workspaceOptimizer = new WorkspaceOptimizer();
 
 const serverManager = new ProductionServerManager(
@@ -66,6 +142,44 @@ const serverManager = new ProductionServerManager(
   errorBoundary,
   resourceMonitor,
   healthChecker
+);
+
+// Initialize centralized configuration system
+const configManager = new ConfigManager();
+
+// Register configuration loaders
+const workspaceLoader = FileConfigLoaderFactory.createWorkspaceLoader(process.cwd());
+const userLoader = FileConfigLoaderFactory.createUserLoader();
+const envLoader = EnvironmentConfigLoaderFactory.createDefault();
+const runtimeLoader = RuntimeConfigLoaderFactory.createEmpty();
+
+configManager.registerLoader('workspace', workspaceLoader);
+configManager.registerLoader('user', userLoader);
+configManager.registerLoader('environment', envLoader);
+configManager.registerLoader('runtime', runtimeLoader);
+
+// Register configuration validators
+const diagnosticValidator = new DiagnosticConfigValidator();
+const providerValidator = new ProviderConfigValidator();
+const pluginValidator = new PluginConfigValidator();
+const compositeValidator = new CompositeConfigValidator('MainValidator');
+compositeValidator.addValidator(diagnosticValidator);
+compositeValidator.addValidator(providerValidator);
+compositeValidator.addValidator(pluginValidator);
+configManager.registerValidator('main', compositeValidator);
+
+// Initialize configuration notification service
+const configNotificationService = new ConfigNotificationService(configManager);
+
+// Create configuration adapters
+const diagnosticConfigAdapter = new DiagnosticConfigAdapter(
+  configManager,
+  configNotificationService
+);
+
+const pluginConfigAdapter = new PluginConfigAdapter(
+  configManager,
+  configNotificationService
 );
 
 // Create a text document manager
@@ -77,11 +191,25 @@ const fhirResourceService = new FHIRResourceService();
 const fhirPathContextService = new FHIRPathContextService(fhirResourceService);
 const fhirPathFunctionRegistry = new FHIRPathFunctionRegistry();
 const fhirValidationProvider = new FHIRValidationProvider(fhirPathService, fhirResourceService);
-const diagnosticProvider = new DiagnosticProvider(fhirPathService, fhirPathContextService, fhirValidationProvider);
+const diagnosticProvider = new DiagnosticProvider(
+  fhirPathService,
+  fhirPathContextService,
+  fhirValidationProvider,
+  diagnosticConfigAdapter.getEnhancedDiagnosticConfig()
+);
 const documentService = new DocumentService(documents, fhirPathService);
 const completionProvider = new CompletionProvider(fhirPathService, fhirResourceService);
 const semanticTokensProvider = new SemanticTokensProvider(fhirPathService);
 const hoverProvider = new HoverProvider(fhirPathService, fhirPathContextService);
+// Initialize plugin system - will be configured later from config manager
+const pluginManager = new PluginManager(connection, {
+  enabled: false, // Temporarily disabled until configuration is loaded
+  sources: [],
+  disabled: [],
+  configuration: {}
+});
+
+// Legacy code action provider for backward compatibility
 const codeActionProvider = new CodeActionProvider(connection, fhirPathService, fhirPathFunctionRegistry);
 
 // Symbol navigation providers
@@ -123,11 +251,11 @@ const tokenModifiers = [
 // Server initialization
 connection.onInitialize(async (params: InitializeParams): Promise<InitializeResult> => {
   connection.console.log('FHIRPath Language Server initializing...');
-  
+
   try {
     // Start the production server manager
     await serverManager.start();
-    
+
     // Add cleanup handlers for server shutdown
     serverManager.addShutdownHandler(async () => {
       connection.console.log('Cleaning up services...');
@@ -135,7 +263,7 @@ connection.onInitialize(async (params: InitializeParams): Promise<InitializeResu
       // Close any open file handles
       // Cleanup service caches
     });
-    
+
     // Add cleanup for workspace symbol provider
     serverManager.addShutdownHandler(async () => {
       try {
@@ -148,7 +276,7 @@ connection.onInitialize(async (params: InitializeParams): Promise<InitializeResu
         connection.console.error(`Error cleaning up workspace symbol provider: ${error}`);
       }
     });
-    
+
     // Add cleanup for diagnostic provider
     serverManager.addShutdownHandler(async () => {
       try {
@@ -157,10 +285,74 @@ connection.onInitialize(async (params: InitializeParams): Promise<InitializeResu
         connection.console.error(`Error cleaning up diagnostic provider: ${error}`);
       }
     });
-    
+
+    // Add cleanup for configuration system
+    serverManager.addShutdownHandler(async () => {
+      try {
+        diagnosticConfigAdapter.dispose();
+        pluginConfigAdapter.dispose();
+      } catch (error) {
+        connection.console.error(`Error cleaning up configuration system: ${error}`);
+      }
+    });
+
+    // Add cleanup for plugin system
+    serverManager.addShutdownHandler(async () => {
+      try {
+        await pluginManager.dispose();
+        connection.console.log('Plugin system disposed');
+      } catch (error) {
+        connection.console.error(`Error disposing plugin system: ${error}`);
+      }
+    });
+
   } catch (error) {
     connection.console.error(`Failed to start server manager: ${error}`);
     // Continue with basic initialization even if server manager fails
+  }
+
+  // Load configuration from all sources
+  try {
+    logger.info('Loading configuration...', { operation: 'loadConfiguration' });
+    await configManager.loadConfiguration();
+    logger.info('Configuration loaded successfully', { operation: 'loadConfiguration' });
+  } catch (error) {
+    logger.warn('Failed to load configuration', error, { operation: 'loadConfiguration' });
+    logger.info('Using default configuration', { operation: 'loadConfiguration' });
+  }
+
+  // Initialize plugin system with loaded configuration
+  try {
+    logger.info('Initializing plugin system...', { operation: 'initializePlugins' });
+    
+    // Update plugin manager with loaded configuration
+    const pluginConfig = pluginConfigAdapter.getPluginConfig();
+    await (pluginManager as any).updateConfiguration(pluginConfig);
+    
+    if (pluginConfig.enabled) {
+      await pluginManager.initialize();
+      
+      // Activate plugins for language support
+      await pluginManager.activatePlugins({
+        type: 'onLanguage',
+        value: 'fhirpath'
+      });
+      
+      logger.info('Plugin system initialized successfully', { 
+        operation: 'initializePlugins'
+      }, {
+        pluginsEnabled: true
+      });
+    } else {
+      logger.info('Plugin system is disabled in configuration', { 
+        operation: 'initializePlugins'
+      }, {
+        pluginsEnabled: false
+      });
+    }
+  } catch (error) {
+    logger.error('Failed to initialize plugin system', error, { operation: 'initializePlugins' });
+    logger.info('Continuing without plugin system', { operation: 'initializePlugins' });
   }
 
   return {
@@ -223,7 +415,7 @@ connection.onInitialize(async (params: InitializeParams): Promise<InitializeResu
       // Phase 4: Document formatting support
       documentFormattingProvider: true,
       documentRangeFormattingProvider: true,
-      
+
       // Inlay hints for expression evaluation
       inlayHintProvider: {
         resolveProvider: false
@@ -235,7 +427,7 @@ connection.onInitialize(async (params: InitializeParams): Promise<InitializeResu
 // Server initialized
 connection.onInitialized(async () => {
   connection.console.log('FHIRPath Language Server initialized successfully');
-  
+
   // Track connection for resource monitoring
   resourceMonitor.trackConnection('connect');
 
@@ -253,11 +445,29 @@ connection.onInitialized(async () => {
 
 // Document change handling
 documents.onDidChangeContent(async (change) => {
-  connection.console.log(`Document changed: ${change.document.uri}`);
+  const context = requestContext.createRequestContext(
+    'document',
+    'contentChanged',
+    change.document.uri
+  );
   
+  const docLogger = logger.withContext(context);
+  const timer = docLogger.startPerformanceTimer('documentChange');
+
+  docLogger.debug('Document content changed', { 
+    operation: 'contentChanged' 
+  }, {
+    version: change.document.version,
+    contentLength: change.document.getText().length
+  });
+
   try {
-    await validateTextDocument(change.document);
+    await validateTextDocument(change.document, docLogger);
+    timer.end('Document validation completed');
   } catch (error) {
+    docLogger.error('Document validation failed', error, { operation: 'contentChanged' });
+    timer.end('Document validation failed');
+    
     errorBoundary.handleError(error as Error, {
       operation: 'document_validation',
       documentUri: change.document.uri,
@@ -270,28 +480,63 @@ documents.onDidChangeContent(async (change) => {
   if (change.document.uri.endsWith('.fhirpath')) {
     try {
       await workspaceSymbolProvider.handleFileChanged(change.document.uri);
+      docLogger.debug('Workspace symbols updated');
     } catch (error) {
-      connection.console.error(`Error updating workspace symbols for ${change.document.uri}: ${error}`);
+      docLogger.error('Error updating workspace symbols', error, { operation: 'updateWorkspaceSymbols' });
     }
   }
+  
+  requestContext.endRequest(context.requestId!);
 });
 
 // Document validation with error boundary
-async function validateTextDocument(textDocument: TextDocument): Promise<void> {
+async function validateTextDocument(textDocument: TextDocument, parentLogger = logger): Promise<void> {
+  const context = requestContext.createDiagnosticContext(
+    textDocument.uri,
+    textDocument.getText().substring(0, 100) + '...', // First 100 chars for context
+    {
+      parsePhase: 'validation'
+    }
+  );
+  
+  const diagnosticLogger = parentLogger.withContext(context);
+  const timer = diagnosticLogger.startPerformanceTimer('validation');
+
   try {
+    diagnosticLogger.debug('Starting document validation', {
+      parsePhase: 'validation'
+    }, {
+      contentLength: textDocument.getText().length,
+      version: textDocument.version
+    });
+
     const diagnostics = await diagnosticProvider.provideDiagnostics(textDocument);
+    
     connection.sendDiagnostics({
       uri: textDocument.uri,
       diagnostics
     });
+
+    diagnosticLogger.info('Document validation completed', {
+      parsePhase: 'validation'
+    }, {
+      diagnosticCount: diagnostics.length,
+      errorCount: diagnostics.filter(d => d.severity === DiagnosticSeverity.Error).length,
+      warningCount: diagnostics.filter(d => d.severity === DiagnosticSeverity.Warning).length
+    });
+    
+    timer.end(`Validation completed with ${diagnostics.length} diagnostics`);
   } catch (error) {
+    diagnosticLogger.error('Diagnostic provider failed', error, { parsePhase: 'validation' });
+    timer.end('Validation failed');
+    
     errorBoundary.handleError(error as Error, {
       operation: 'provide_diagnostics',
       documentUri: textDocument.uri,
       timestamp: new Date(),
       severity: 'medium'
     });
-    
+
     // Send empty diagnostics to clear any previous errors
     connection.sendDiagnostics({
       uri: textDocument.uri,
@@ -332,24 +577,53 @@ connection.onRequest('textDocument/semanticTokens/range', async (params) => {
 
 // Completion provider with error boundary
 connection.onCompletion(async (params) => {
+  const context = requestContext.createProviderContext(
+    'completion',
+    'provideCompletions', 
+    params.textDocument.uri,
+    {
+      params: {
+        position: params.position,
+        triggerCharacter: params.context?.triggerCharacter,
+        triggerKind: params.context?.triggerKind
+      }
+    }
+  );
+  
+  const providerLogger = logger.withContext(context);
+  const timer = providerLogger.startPerformanceTimer('completion');
+
   try {
-    connection.console.log(`Completion request: ${JSON.stringify({
-      uri: params.textDocument.uri,
+    providerLogger.debug('Processing completion request', {
+      provider: 'completion',
+      method: 'provideCompletions'
+    }, {
       position: params.position,
-      triggerCharacter: params.context?.triggerCharacter,
-      triggerKind: params.context?.triggerKind
-    })}`);
+      triggerCharacter: params.context?.triggerCharacter
+    });
 
     const document = documents.get(params.textDocument.uri);
     if (!document) {
-      connection.console.log('Document not found for completion');
+      providerLogger.warn('Document not found for completion');
+      timer.end('Completion failed - document not found');
       return [];
     }
 
     const result = await completionProvider.provideCompletions(document, params);
-    connection.console.log(`Completion result: ${result.length} items`);
+    
+    providerLogger.info('Completion request completed', {
+      provider: 'completion',
+      method: 'provideCompletions'
+    }, {
+      resultCount: result.length
+    });
+    
+    timer.end(`Completion completed with ${result.length} items`);
     return result;
   } catch (error) {
+    providerLogger.error('Completion provider error', error, { provider: 'completion', method: 'provideCompletions' });
+    timer.end('Completion failed with error');
+    
     errorBoundary.handleError(error as Error, {
       operation: 'provide_completions',
       documentUri: params.textDocument.uri,
@@ -357,6 +631,8 @@ connection.onCompletion(async (params) => {
       severity: 'low'
     });
     return [];
+  } finally {
+    requestContext.endRequest(context.requestId!);
   }
 });
 
@@ -389,13 +665,36 @@ connection.onCodeAction(async (params) => {
       return [];
     }
 
-    const actions = await codeActionProvider.provideCodeActions(
-      document,
-      params.range,
-      params.context
-    );
+    // Get providers from plugin system first
+    const providerRegistry = pluginManager.getProviderRegistry();
+    const pluginProviders = providerRegistry.getCodeActionProviders(document);
+    
+    if (pluginProviders.length > 0) {
+      // Use plugin-based providers
+      const allActions = [];
+      
+      for (const provider of pluginProviders) {
+        try {
+          const actions = await provider.provideCodeActions(document, params.range, params.context);
+          if (Array.isArray(actions)) {
+            allActions.push(...actions);
+          }
+        } catch (error) {
+          connection.console.error(`Plugin provider error: ${error}`);
+        }
+      }
+      
+      return allActions;
+    } else {
+      // Fallback to legacy provider
+      const actions = await codeActionProvider.provideCodeActions(
+        document,
+        params.range,
+        params.context
+      );
 
-    return actions;
+      return actions;
+    }
   } catch (error) {
     errorBoundary.handleError(error as Error, {
       operation: 'provide_code_actions',
@@ -586,11 +885,11 @@ connection.onRenameRequest(async (params) => {
 // Shutdown handling
 connection.onShutdown(async () => {
   connection.console.log('FHIRPath Language Server shutting down');
-  
+
   try {
     // Track connection disconnect
     resourceMonitor.trackConnection('disconnect');
-    
+
     // Graceful shutdown through server manager
     await serverManager.stop();
   } catch (error) {
@@ -603,15 +902,15 @@ async function startPerformanceServices() {
   try {
     // Start memory monitoring
     memoryManager.startMonitoring();
-    
+
     // Start background processor
     await backgroundProcessor.start();
-    
+
     // Setup profiler thresholds
     profiler.setThreshold('completion', 100);
     profiler.setThreshold('diagnostic', 200);
     profiler.setThreshold('hover', 50);
-    
+
     connection.console.log('Performance optimization services started');
   } catch (error) {
     connection.console.error(`Failed to start performance services: ${error}`);
@@ -640,7 +939,7 @@ connection.onRequest('fhirpath/health', () => {
   try {
     const health = serverManager.getHealth();
     const state = serverManager.getState();
-    
+
     return {
       status: health.status,
       state,
@@ -678,9 +977,23 @@ connection.onRequest('fhirpath/performance', () => {
     const performanceReport = profiler.getReport();
     const memoryReport = memoryManager.getMemoryReport();
     const throttleStatus = requestThrottler.getThrottleStatus();
-    
+    const monitoringStats = performanceMonitor.getStatistics();
+    const monitoringReport = performanceMonitor.getReport();
+
+    logger.debug('Performance metrics requested', {
+      operation: 'getPerformanceMetrics'
+    }, {
+      reportSize: performanceReport.measures.length,
+      monitoringStatsCount: Array.isArray(monitoringStats) ? monitoringStats.length : 1
+    });
+
     return {
       performance: performanceReport,
+      monitoring: {
+        statistics: monitoringStats,
+        report: monitoringReport,
+        enabled: performanceMonitor.isEnabled()
+      },
       memory: memoryReport,
       throttling: throttleStatus,
       backgroundTasks: {
@@ -688,9 +1001,12 @@ connection.onRequest('fhirpath/performance', () => {
         activeCount: backgroundProcessor.getActiveTaskCount(),
         workerCount: backgroundProcessor.getWorkerCount()
       },
+      correlationContext: correlationContext.getStats(),
       timestamp: new Date().toISOString()
     };
   } catch (error) {
+    logger.error('Failed to generate performance metrics', error, { operation: 'getPerformanceMetrics' });
+    
     return {
       error: (error as Error).message,
       timestamp: new Date().toISOString()
