@@ -105,14 +105,29 @@ export class BackgroundProcessor extends EventEmitter {
   }
 
   private async createWorker(): Promise<Worker> {
-    let workerPath: string;
-    try {
-      // Try to resolve the worker file
-      workerPath = require.resolve('./BackgroundWorker');
-    } catch (error) {
-      // Fallback to explicit path
-      const path = require('path');
-      workerPath = path.join(__dirname, 'BackgroundWorker.js');
+    const path = require('path');
+    const fs = require('fs');
+    
+    // Since we're using esbuild bundling, we need to construct the correct path
+    // The worker should be in the services directory relative to the server output
+    let workerPath: string | undefined;
+    
+    // Try multiple possible paths in order of preference
+    const possiblePaths = [
+      path.join(__dirname, 'services', 'BackgroundWorker.js'), // When running from root output
+      path.join(__dirname, 'BackgroundWorker.js'), // When running from services directory
+      path.join(process.cwd(), 'server', 'out', 'services', 'BackgroundWorker.js') // Absolute fallback
+    ];
+    
+    for (const testPath of possiblePaths) {
+      if (fs.existsSync(testPath)) {
+        workerPath = testPath;
+        break;
+      }
+    }
+    
+    if (!workerPath) {
+      throw new Error(`Background worker file not found. Tried paths: ${possiblePaths.join(', ')}`);
     }
     
     const worker = new Worker(workerPath);
