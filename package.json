@@ -14,6 +14,11 @@
     "Formatters"
   ],
   "main": "./client/out/extension.js",
+  "activationEvents": [
+    "onLanguage:fhirpath",
+    "workspaceContains:.fhirpath-lsp.json",
+    "onCommand:fhirpath.validateExpression"
+  ],
   "workspaces": [
     "client",
     "server",
@@ -106,6 +111,16 @@
       {
         "command": "fhirpath.validateExpression",
         "title": "FHIRPath: Validate Expression"
+      },
+      {
+        "command": "fhirpath.createConfig",
+        "title": "FHIRPath: Create Configuration File"
+      }
+    ],
+    "jsonValidation": [
+      {
+        "fileMatch": ".fhirpath-lsp.json",
+        "url": "./schemas/fhirpath-lsp-config.schema.json"
       }
     ]
   },

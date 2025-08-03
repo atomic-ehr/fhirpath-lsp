@@ -237,6 +237,7 @@ export class ModelProviderService {
           pathLength: path.length
         });
       }
+      
 
       // Get the root type info
       const rootTypeInfo = await this.modelProvider.getType(rootType);
@@ -280,6 +281,7 @@ export class ModelProviderService {
       result.isValid = true;
       result.finalType = currentType;
       result.availableProperties = await this.getAvailableProperties(currentType);
+      
 
       if (this.options.enableLogging) {
         logger.debug('Property path navigation completed', {
@@ -1148,9 +1150,9 @@ export class ModelProviderService {
   }
 
   /**
-   * Private: Get available properties for a type
+   * Get available properties for a type
    */
-  private async getAvailableProperties(typeInfo: TypeInfo): Promise<string[]> {
+  async getAvailableProperties(typeInfo: TypeInfo): Promise<string[]> {
     try {
       // Use ModelProvider method if available
       if (typeof (this.modelProvider as any).getElementNames === 'function') {

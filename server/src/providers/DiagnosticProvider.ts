@@ -94,7 +94,7 @@ export class DiagnosticProvider {
 
     // Initialize modular validators and converters
     this.directiveValidator = new DirectiveValidator();
-    this.functionValidator = new FunctionValidator(this.functionRegistry);
+    this.functionValidator = new FunctionValidator(this.functionRegistry, this.fhirPathService);
     this.semanticValidator = new SemanticValidator(this.fhirPathService);
     this.typeAwareValidator = new TypeAwareValidator(
       this.fhirPathService,
@@ -152,13 +152,13 @@ export class DiagnosticProvider {
           );
           diagnostics.push(...typeAwareDiagnostics);
         } catch (error) {
-          console.error('Type-aware diagnostics error:', error);
+          this.logger.error('Type-aware diagnostics error:', error);
         }
       }
 
       return diagnostics;
     } catch (error) {
-      console.error('Enhanced diagnostics error:', error);
+      this.logger.error('Enhanced diagnostics error:', error);
       return [];
     }
   }
@@ -382,7 +382,7 @@ export class DiagnosticProvider {
             }
           } catch (exprError) {
             // Handle errors in individual expressions
-            console.warn(`Error parsing expression "${expr.expression}":`, exprError);
+            this.logger.warn(`Error parsing expression "${expr.expression}":`, exprError);
             diagnostics.push({
               severity: DiagnosticSeverity.Error,
               range: {
@@ -403,11 +403,14 @@ export class DiagnosticProvider {
         diagnostics.push(...fhirDiagnostics);
       }
 
-      return diagnostics.slice(0, this.maxDiagnostics);
+      // Deduplicate diagnostics by code and range to prevent duplicates
+      const deduplicatedDiagnostics = this.deduplicateDiagnostics(diagnostics);
+
+      return deduplicatedDiagnostics.slice(0, this.maxDiagnostics);
 
     } catch (error) {
       // Handle unexpected errors gracefully
-      console.error('Diagnostic provider error:', error);
+      this.logger.error('Diagnostic provider error:', error);
       return [{
         severity: DiagnosticSeverity.Error,
         range: {
@@ -453,7 +456,7 @@ export class DiagnosticProvider {
         const diagnostics = await this.provideDiagnostics(document);
         callback(diagnostics);
       } catch (error) {
-        console.error('Debounced validation error:', error);
+        this.logger.error('Debounced validation error:', error);
       } finally {
         this.validationTimeouts.delete(uri);
       }
@@ -471,6 +474,126 @@ export class DiagnosticProvider {
       clearTimeout(timeout);
       this.validationTimeouts.delete(uri);
     }
+  }
+
+  /**
+   * Deduplicate diagnostics by code and range to prevent identical diagnostics
+   * Also prioritize higher-quality diagnostics for the same issue
+   */
+  private deduplicateDiagnostics(diagnostics: Diagnostic[]): Diagnostic[] {
+    const seen = new Set<string>();
+    const deduplicated: Diagnostic[] = [];
+    const rangeBasedGroups = new Map<string, Diagnostic[]>();
+
+    // Group diagnostics by range (to handle overlapping issues)
+    for (const diagnostic of diagnostics) {
+      const rangeKey = `${diagnostic.range.start.line}:${diagnostic.range.start.character}:${diagnostic.range.end.line}:${diagnostic.range.end.character}`;
+      
+      if (!rangeBasedGroups.has(rangeKey)) {
+        rangeBasedGroups.set(rangeKey, []);
+      }
+      rangeBasedGroups.get(rangeKey)!.push(diagnostic);
+    }
+
+    // Process each range group to select the best diagnostic
+    for (const [rangeKey, groupDiagnostics] of rangeBasedGroups) {
+      if (groupDiagnostics.length === 1) {
+        // Single diagnostic, keep it
+        const diagnostic = groupDiagnostics[0];
+        const key = `${diagnostic.code || 'no-code'}:${rangeKey}:${diagnostic.source || 'no-source'}`;
+        
+        if (!seen.has(key)) {
+          seen.add(key);
+          deduplicated.push(diagnostic);
+        }
+      } else {
+        // Multiple diagnostics for same range, prioritize
+        const bestDiagnostic = this.selectBestDiagnostic(groupDiagnostics);
+        if (bestDiagnostic) {
+          const key = `${bestDiagnostic.code || 'no-code'}:${rangeKey}:${bestDiagnostic.source || 'no-source'}`;
+          
+          if (!seen.has(key)) {
+            seen.add(key);
+            deduplicated.push(bestDiagnostic);
+          }
+        }
+      }
+    }
+
+    return deduplicated;
+  }
+
+  /**
+   * Select the best diagnostic from a group of overlapping diagnostics
+   */
+  private selectBestDiagnostic(diagnostics: Diagnostic[]): Diagnostic | null {
+    if (diagnostics.length === 0) return null;
+    if (diagnostics.length === 1) return diagnostics[0];
+
+    // Check if this is an unknown function issue
+    const unknownFunctionDiagnostics = diagnostics.filter(d => 
+      d.message.toLowerCase().includes('unknown function') ||
+      (d.code && String(d.code).includes('UNKNOWN_FUNCTION'))
+    );
+
+    if (unknownFunctionDiagnostics.length > 0) {
+      // For unknown function issues, prioritize diagnostics with suggestions
+      const withSuggestions = unknownFunctionDiagnostics.filter(d => 
+        d.message.includes('Did you mean')
+      );
+      
+      if (withSuggestions.length > 0) {
+        // Return the diagnostic with suggestion that has the most helpful message
+        return withSuggestions.reduce((best, current) => {
+          // Prefer diagnostics from function validator (more specific)
+          if (current.source?.includes('function') && !best.source?.includes('function')) {
+            return current;
+          }
+          if (best.source?.includes('function') && !current.source?.includes('function')) {
+            return best;
+          }
+          
+          // Prefer shorter, more concise messages
+          return current.message.length < best.message.length ? current : best;
+        });
+      }
+      
+      // If no suggestions, return the most specific one
+      return unknownFunctionDiagnostics.reduce((best, current) => {
+        // Prefer function validator over semantic validator
+        if (current.source?.includes('function') && !best.source?.includes('function')) {
+          return current;
+        }
+        return best;
+      });
+    }
+
+    // For other types of diagnostics, prioritize by severity and specificity
+    return diagnostics.reduce((best, current) => {
+      // Prefer errors over warnings (lower severity number = higher priority)
+      const currentSeverity = current.severity ?? DiagnosticSeverity.Information;
+      const bestSeverity = best.severity ?? DiagnosticSeverity.Information;
+      
+      if (currentSeverity < bestSeverity) {
+        return current;
+      }
+      if (bestSeverity < currentSeverity) {
+        return best;
+      }
+      
+      // Prefer more specific sources
+      const specificSources = ['fhirpath-lsp', 'function-validator', 'type-checker'];
+      const currentSourceScore = specificSources.indexOf(current.source || '');
+      const bestSourceScore = specificSources.indexOf(best.source || '');
+      
+      if (currentSourceScore >= 0 && bestSourceScore >= 0) {
+        return currentSourceScore < bestSourceScore ? current : best;
+      }
+      if (currentSourceScore >= 0) return current;
+      if (bestSourceScore >= 0) return best;
+      
+      return best;
+    });
   }
 
   /**

@@ -62,8 +62,7 @@ export class InlayHintProvider {
             }
 
             // Evaluate the expression
-            const { evaluate } = require('@atomic-ehr/fhirpath');
-            const result = evaluate(expr.expression, contextData);
+            const result = this.fhirPathService.evaluate(expr.expression, contextData);
 
             // Create inlay hint
             const resultText = this.formatResultForInlay(result);

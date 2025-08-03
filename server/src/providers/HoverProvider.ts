@@ -564,6 +564,77 @@ export class HoverProvider {
     };
   }
 
+  private getFHIRPropertyInfo(propertyName: string, resourceType: string): {
+    type: string;
+    required?: boolean;
+    cardinality?: string;
+    description?: string;
+    constraints?: string[];
+    binding?: {
+      strength: string;
+      valueSet?: string;
+      name?: string;
+    };
+    examples?: string[];
+  } {
+    // Get all properties for the resource type
+    const allProperties = this.fhirPathService.getResourcePropertyDetails(resourceType);
+    
+    // Find the specific property
+    const property = allProperties.find(p => p.name === propertyName);
+    
+    if (property) {
+      return {
+        type: property.type,
+        cardinality: property.cardinality,
+        description: property.description || `Property of ${resourceType} resource`,
+        required: false, // TODO: Get from model provider when available
+        constraints: [], // TODO: Get from model provider when available  
+        binding: undefined, // TODO: Get from model provider when available
+        examples: this.getPropertyExamples(propertyName, resourceType)
+      };
+    }
+    
+    // Fallback for unknown properties
+    return {
+      type: 'unknown',
+      description: `Property of ${resourceType} resource`,
+      cardinality: '[0..*]',
+      required: false,
+      examples: []
+    };
+  }
+
+  private getPropertyExamples(propertyName: string, resourceType: string): string[] {
+    // Common property examples based on property name patterns
+    const exampleMap: Record<string, string[]> = {
+      'id': [`"${resourceType.toLowerCase()}-example-1"`],
+      'name': [
+        '{ "family": "Smith", "given": ["John"] }',
+        '"John Smith"'
+      ],
+      'status': ['"active"', '"final"', '"completed"'],
+      'code': [
+        '{ "coding": [{ "system": "http://loinc.org", "code": "12345" }] }'
+      ],
+      'value': ['"example value"', '123', 'true'],
+      'text': ['"Example text content"'],
+      'system': ['"http://terminology.hl7.org/CodeSystem/v2-0203"'],
+      'display': ['"Example Display Text"'],
+      'use': ['"official"', '"usual"', '"temp"'],
+      'period': [
+        '{ "start": "2023-01-01", "end": "2023-12-31" }'
+      ],
+      'reference': [`"${resourceType}/example-id"`],
+      'identifier': [
+        '{ "system": "http://example.org/id", "value": "12345" }'
+      ]
+    };
+
+    // Return examples based on property name
+    return exampleMap[propertyName] || [`"example ${propertyName} value"`];
+  }
+
   private createGenericPropertyHover(propertyName: string): MarkupContent {
     const content = `**${propertyName}** *(property)*\\n\\nFHIR resource property. Use with appropriate resource context.`;
 

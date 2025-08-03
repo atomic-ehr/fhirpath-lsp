@@ -1,0 +1,9 @@
+// Test completion ordering: Properties should come first, then functions, then operators, then keywords
+// 
+// Expected order for "Patient.":
+// 1. Properties (active, name, telecom, gender, etc.) - sortText: 0_*
+// 2. Functions (where, select, exists, etc.) - sortText: 1_function_*
+// 3. Operators (and, or, etc.) - sortText: 3_operator_*
+// 4. Keywords (true, false, etc.) - sortText: 4_keyword_*
+
+Patient.

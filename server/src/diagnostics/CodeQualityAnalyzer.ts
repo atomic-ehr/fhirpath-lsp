@@ -238,12 +238,12 @@ export class CodeQualityAnalyzer implements IDiagnosticAnalyzer {
 
       const diagnostic = EnhancedDiagnosticBuilder
         .create('quality-magic-values', EnhancedDiagnosticCategory.CodeQuality)
-        .withMessage(`Consider documenting the meaning of '${value}'`)
+        .withMessage(`Magic string value '${value}' should be documented or extracted to a constant`)
         .withRange(range)
         .withSeverity(DiagnosticSeverity.Information)
         .withImpact(DiagnosticImpact.Medium)
-        .withSuggestion('Add a comment explaining what this value represents')
-        .withDocumentation('Magic values can make code harder to understand and maintain')
+        .withSuggestion('Add a comment explaining the meaning, or extract to a named constant for reusability')
+        .withDocumentation('Undocumented string literals make FHIRPath expressions harder to understand and maintain. Consider documenting the purpose or extracting frequently used values.')
         .build();
 
       diagnostics.push(diagnostic);

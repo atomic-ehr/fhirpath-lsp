@@ -1,0 +1,17 @@
+// @inputfile patient-example.json
+// @resource Patient
+//
+// Test basic evaluation
+Patient.address
+
+// Test simple field access
+Patient.name
+
+// Test nested access
+Patient.name.given
+
+// Test boolean check
+Patient.active
+
+// Test where clause
+Patient.name.where(use = 'official')

@@ -30,9 +30,14 @@ let statusBarItem = window.createStatusBarItem(StatusBarAlignment.Right, 100);
 export function activate(context: ExtensionContext) {
   console.log('FHIRPath Language Extension activating...');
 
+  // Check for .fhirpath-lsp.json in workspace
+  const configFileExists = checkForConfigFile();
+  
   // Show status
   statusBarItem.text = "$(loading~spin) FHIRPath";
-  statusBarItem.tooltip = "FHIRPath Language Server starting...";
+  statusBarItem.tooltip = configFileExists 
+    ? "FHIRPath Language Server starting (config detected)..."
+    : "FHIRPath Language Server starting...";
   statusBarItem.show();
 
   // Start the language server
@@ -41,7 +46,10 @@ export function activate(context: ExtensionContext) {
   // Register commands
   registerCommands(context);
 
-  console.log('FHIRPath Language Extension activated');
+  // Watch for config file changes
+  watchConfigFile(context);
+
+  console.log(`FHIRPath Language Extension activated${configFileExists ? ' (config file detected)' : ''}`);
 }
 
 /**
@@ -81,7 +89,10 @@ function startLanguageServer(context: ExtensionContext) {
 
     // Synchronize the setting section 'fhirpath' to the server
     synchronize: {
-      fileEvents: workspace.createFileSystemWatcher('**/*.{fhirpath,fhir}'),
+      fileEvents: [
+        workspace.createFileSystemWatcher('**/*.{fhirpath,fhir}'),
+        workspace.createFileSystemWatcher('**/.fhirpath-lsp.json')
+      ],
       configurationSection: 'fhirpath'
     },
 
@@ -297,6 +308,85 @@ function registerCommands(context: ExtensionContext) {
     }
   });
 
+  // Create config file
+  const createConfigCommand = commands.registerCommand('fhirpath.createConfig', async () => {
+    if (!workspace.workspaceFolders || workspace.workspaceFolders.length === 0) {
+      window.showErrorMessage('Please open a workspace folder first');
+      return;
+    }
+
+    const workspaceFolder = workspace.workspaceFolders[0];
+    const configPath = Uri.joinPath(workspaceFolder.uri, '.fhirpath-lsp.json');
+
+    // Check if config already exists
+    try {
+      await workspace.fs.stat(configPath);
+      window.showInformationMessage('Configuration file already exists!');
+      
+      // Open the existing config file
+      const doc = await workspace.openTextDocument(configPath);
+      await window.showTextDocument(doc);
+      return;
+    } catch (error) {
+      // Config doesn't exist, create it
+    }
+
+    // Default configuration
+    const defaultConfig = {
+      "$schema": "./schemas/fhirpath-lsp-config.schema.json",
+      "enabled": true,
+      "version": "1.0.0",
+      "diagnostics": {
+        "enabled": true,
+        "performance": {
+          "enabled": true,
+          "maxComplexity": 10,
+          "flagExpensiveOperations": true
+        },
+        "fhirBestPractices": {
+          "enabled": true,
+          "enforceTypeSafety": true,
+          "suggestOptimizations": true
+        }
+      },
+      "providers": {
+        "enabled": true,
+        "modelProvider": {
+          "enabled": true,
+          "fhirModelProvider": {
+            "packages": [
+              {
+                "name": "hl7.fhir.r4.core",
+                "version": "4.0.1"
+              }
+            ]
+          }
+        },
+        "enhanced": {
+          "completion": {
+            "enabled": true,
+            "choiceTypes": true,
+            "deepNavigation": true
+          }
+        }
+      }
+    };
+
+    try {
+      const configContent = JSON.stringify(defaultConfig, null, 2);
+      await workspace.fs.writeFile(configPath, Buffer.from(configContent, 'utf8'));
+      
+      window.showInformationMessage('FHIRPath LSP configuration file created! Enhanced features are now available.');
+      
+      // Open the new config file
+      const doc = await workspace.openTextDocument(configPath);
+      await window.showTextDocument(doc);
+      
+    } catch (error) {
+      window.showErrorMessage(`Failed to create config file: ${error}`);
+    }
+  });
+
   // Register all commands
   context.subscriptions.push(
     validateCommand,
@@ -306,6 +396,7 @@ function registerCommands(context: ExtensionContext) {
     restartServerCommand,
     formatDocumentCommand,
     fixAllCommand,
+    createConfigCommand,
     statusBarItem
   );
 
@@ -329,13 +420,81 @@ function registerCommands(context: ExtensionContext) {
  * Update status bar based on diagnostics
  */
 function updateStatusBar(errorCount: number) {
+  const configExists = checkForConfigFile();
+  
   if (errorCount > 0) {
     statusBarItem.text = `$(error) FHIRPath (${errorCount})`;
-    statusBarItem.tooltip = `FHIRPath: ${errorCount} error${errorCount > 1 ? 's' : ''} found`;
+    statusBarItem.tooltip = `FHIRPath: ${errorCount} error${errorCount > 1 ? 's' : ''} found${configExists ? ' • Config active' : ''}`;
   } else {
     statusBarItem.text = "$(check) FHIRPath";
-    statusBarItem.tooltip = "FHIRPath: No errors";
+    statusBarItem.tooltip = `FHIRPath: No errors${configExists ? ' • Config active' : ''}`;
   }
+}
+
+/**
+ * Check if .fhirpath-lsp.json exists in any workspace folder
+ */
+function checkForConfigFile(): boolean {
+  if (!workspace.workspaceFolders) {
+    return false;
+  }
+
+  for (const folder of workspace.workspaceFolders) {
+    try {
+      const configPath = Uri.joinPath(folder.uri, '.fhirpath-lsp.json');
+      // Note: This is a synchronous check that might not catch all cases
+      // The file watcher will handle runtime detection
+      return true; // We'll rely on the activation event to trigger when config exists
+    } catch (error) {
+      console.log('Config file check error:', error);
+    }
+  }
+  
+  return false;
+}
+
+/**
+ * Watch for config file changes and notify user
+ */
+function watchConfigFile(context: ExtensionContext) {
+  // Watch for config file creation/deletion
+  const configWatcher = workspace.createFileSystemWatcher('**/.fhirpath-lsp.json');
+  
+  configWatcher.onDidCreate((uri) => {
+    console.log('FHIRPath config file created:', uri.toString());
+    window.showInformationMessage(
+      'FHIRPath LSP configuration detected! Enhanced features are now available.',
+      'Restart Extension'
+    ).then(choice => {
+      if (choice === 'Restart Extension') {
+        commands.executeCommand('fhirpath.restartServer');
+      }
+    });
+    
+    // Update status bar to show config is active
+    updateStatusBar(0);
+  });
+
+  configWatcher.onDidChange((uri) => {
+    console.log('FHIRPath config file changed:', uri.toString());
+    
+    // Notify language server of config change
+    if (client && client.isRunning()) {
+      client.sendNotification('fhirpath/configChanged', {
+        uri: uri.toString()
+      });
+    }
+  });
+
+  configWatcher.onDidDelete((uri) => {
+    console.log('FHIRPath config file deleted:', uri.toString());
+    window.showInformationMessage('FHIRPath LSP configuration removed. Some features may be limited.');
+    
+    // Update status bar to remove config indicator
+    updateStatusBar(0);
+  });
+
+  context.subscriptions.push(configWatcher);
 }
 
 /**

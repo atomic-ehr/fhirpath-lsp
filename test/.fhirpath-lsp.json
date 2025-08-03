@@ -1,0 +1,17 @@
+{
+    "providers": {
+        "completion": {
+            "enabled": true
+        }
+    },
+    "enabled": true,
+    "diagnostics": {
+        "enabled": true,
+        "fhirBestPractices": {
+            "enabled": false
+        },
+        "codeQuality": {
+            "enabled": false
+        }
+    }
+}

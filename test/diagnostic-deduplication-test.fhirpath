@@ -1,0 +1,4 @@
+// Test case for unknown function diagnostic deduplication
+// Should only show one diagnostic: "Unknown function 'wher'. Did you mean 'where'?"
+
+Patient.wher()

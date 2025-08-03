@@ -1,0 +1,17 @@
+// @inputfile patient-example.json
+// @resource Patient
+//
+// Test nested path navigation
+Patient.name
+
+// Test deeper navigation - should show completions for HumanName properties
+Patient.name.
+
+// Test typing after completing a path - should filter by current input
+Patient.name.fa
+
+// Test address navigation
+Patient.address.
+
+// Test contact navigation
+Patient.contact.name.

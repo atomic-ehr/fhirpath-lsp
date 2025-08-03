@@ -205,9 +205,10 @@ const diagnosticProvider = new DiagnosticProvider(
   diagnosticConfigAdapter.getEnhancedDiagnosticConfig()
 );
 const documentService = new DocumentService(documents, fhirPathService);
-const completionProvider = new CompletionProvider(fhirPathService, undefined, fhirResourceService);
-const semanticTokensProvider = new SemanticTokensProvider(fhirPathService, modelProviderService);
-const hoverProvider = new HoverProvider(fhirPathService, fhirPathContextService, undefined);
+// These providers will be created after ModelProvider initialization
+let completionProvider: CompletionProvider;
+let semanticTokensProvider: SemanticTokensProvider;
+let hoverProvider: HoverProvider;
 // Built-in functionality
 const performanceAnalyzer = new PerformanceAnalyzer();
 
@@ -336,10 +337,12 @@ async function initializeEnhancedServices(): Promise<void> {
 
   logger.info('Initializing enhanced services...', { operation: 'initializeEnhancedServices' });
   
-  // Note: Enhanced services would be initialized here when they're implemented
-  // For now, we track the availability for enhanced provider creation
+  // Create providers with ModelProvider now that it's available
+  completionProvider = new CompletionProvider(fhirPathService, modelProviderService, fhirResourceService);
+  semanticTokensProvider = new SemanticTokensProvider(fhirPathService, modelProviderService);
+  hoverProvider = new HoverProvider(fhirPathService, fhirPathContextService, modelProviderService);
   
-  logger.info('Enhanced services initialized', { operation: 'initializeEnhancedServices' });
+  logger.info('✅ Enhanced services initialized with ModelProvider', { operation: 'initializeEnhancedServices' });
 }
 
 /**
@@ -494,8 +497,12 @@ function temporarilyDisableModelProvider(): void {
 function createFallbackProviders(): void {
   logger.info('Creating fallback providers without ModelProvider', { operation: 'createFallback' });
   
-  // Note: The existing providers will continue to work in basic mode
-  // Enhanced features will be automatically disabled when ModelProvider is not available
+  // Create providers without ModelProvider for basic functionality
+  completionProvider = new CompletionProvider(fhirPathService, undefined, fhirResourceService);
+  semanticTokensProvider = new SemanticTokensProvider(fhirPathService, undefined);
+  hoverProvider = new HoverProvider(fhirPathService, fhirPathContextService, undefined);
+  
+  logger.info('⚠️ Fallback providers created (limited functionality)', { operation: 'createFallback' });
   
   // Update configuration to reflect fallback state
   try {
@@ -571,6 +578,13 @@ connection.onInitialize(async (params: InitializeParams): Promise<InitializeResu
     logger.warn('Failed to load configuration', error, { operation: 'loadConfiguration' });
     logger.info('Using default configuration', { operation: 'loadConfiguration' });
   }
+
+  // Create initial providers (will be recreated with ModelProvider if available)
+  logger.info('Creating initial providers...', { operation: 'createInitialProviders' });
+  completionProvider = new CompletionProvider(fhirPathService, undefined, fhirResourceService);
+  semanticTokensProvider = new SemanticTokensProvider(fhirPathService, undefined);
+  hoverProvider = new HoverProvider(fhirPathService, fhirPathContextService, undefined);
+  logger.info('Initial providers created', { operation: 'createInitialProviders' });
 
   // Initialize model provider with enhanced configuration
   await initializeModelProvider();

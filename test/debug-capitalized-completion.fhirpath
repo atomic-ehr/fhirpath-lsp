@@ -1,0 +1,5 @@
+// Test file to debug capitalized resource type completion and model provider validation
+// When typing "Pa" here, should suggest Patient, etc.
+// The property "name" should not show diagnostic errors because it exists in the Patient model
+
+Patient.name

@@ -1,0 +1,118 @@
+{
+  "$schema": "./schemas/fhirpath-lsp-config.schema.json",
+  "enabled": true,
+  "version": "1.0.0",
+  "diagnostics": {
+    "enabled": true,
+    "performance": {
+      "enabled": true,
+      "maxComplexity": 15,
+      "maxNestingDepth": 6,
+      "flagRedundantOperations": true,
+      "flagExpensiveOperations": true
+    },
+    "codeQuality": {
+      "enabled": true,
+      "maxLineLength": 120,
+      "enforceNamingConventions": false,
+      "flagMagicValues": true,
+      "requireDocumentation": false
+    },
+    "fhirBestPractices": {
+      "enabled": true,
+      "enforceTypeSafety": true,
+      "flagDeprecatedElements": true,
+      "suggestOptimizations": true,
+      "checkCardinality": true
+    },
+    "severity": {
+      "performance": 2,
+      "codeQuality": 3,
+      "fhirBestPractices": 2,
+      "maintainability": 3
+    }
+  },
+  "providers": {
+    "enabled": true,
+    "modelProvider": {
+      "enabled": true,
+      "required": false,
+      "fhirModelProvider": {
+        "packages": [
+          {
+            "name": "hl7.fhir.r4.core",
+            "version": "4.0.1"
+          },
+          {
+            "name": "hl7.fhir.us.core",
+            "version": "6.0.0"
+          }
+        ],
+        "cacheDir": ".fhir-cache",
+        "registryUrl": "https://fs.get-ig.org/pkgs"
+      },
+      "caching": {
+        "enabled": true,
+        "ttl": 900000,
+        "maxSize": 2000
+      }
+    },
+    "enhanced": {
+      "completion": {
+        "enabled": true,
+        "enhanced": true,
+        "choiceTypes": true,
+        "inheritance": true,
+        "deepNavigation": true,
+        "maxCompletions": 150
+      },
+      "hover": {
+        "enabled": true,
+        "enhanced": true,
+        "showHierarchy": true,
+        "showConstraints": true,
+        "showTerminology": true
+      },
+      "diagnostics": {
+        "enabled": true,
+        "typeAware": true,
+        "strictMode": false,
+        "enableSuggestions": true,
+        "maxSuggestions": 10
+      }
+    },
+    "completion": {
+      "enabled": true,
+      "maxSuggestions": 75,
+      "includeSnippets": true,
+      "includeDocumentation": true,
+      "fuzzyMatching": true,
+      "sortByRelevance": true
+    },
+    "hover": {
+      "enabled": true,
+      "includeDocumentation": true,
+      "includeExamples": true,
+      "maxContentLength": 1500,
+      "showTypeInformation": true
+    },
+    "performance": {
+      "enabled": true,
+      "requestThrottling": {
+        "enabled": true,
+        "adaptiveEnabled": true,
+        "defaultWindowMs": 800
+      },
+      "caching": {
+        "enabled": true,
+        "maxCacheSize": 1500,
+        "ttlMs": 420000
+      },
+      "timeouts": {
+        "completionTimeoutMs": 6000,
+        "diagnosticTimeoutMs": 12000,
+        "hoverTimeoutMs": 4000
+      }
+    }
+  }
+}

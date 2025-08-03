@@ -1,0 +1,5 @@
+// Test file to verify hover functionality with FHIR properties
+// Hover over "Patient" should show resource info
+// Hover over "name" should show property info without errors
+
+Patient.name.given

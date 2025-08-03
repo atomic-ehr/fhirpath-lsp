@@ -1,4 +1,3 @@
 // @inputfile patient-example.json
-// @resource Patient
 //
-Patient.address
+Patient.name.empty()

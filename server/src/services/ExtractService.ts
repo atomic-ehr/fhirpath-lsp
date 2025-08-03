@@ -7,6 +7,7 @@ import {
 } from 'vscode-languageserver';
 
 import { FHIRPathService } from '../parser/FHIRPathService';
+import { getLogger } from '../logging/index.js';
 
 /**
  * Information about an extractable expression
@@ -43,6 +44,8 @@ export interface ExtractResult {
  * Service for extracting expressions to variables and functions
  */
 export class ExtractService {
+  private logger = getLogger('ExtractService');
+
   constructor(private fhirPathService: FHIRPathService) {}
 
   /**
@@ -423,7 +426,7 @@ export class ExtractService {
       const parseResult = this.fhirPathService.parse(text);
       return parseResult.success;
     } catch (error) {
-      console.error('Error validating extract result:', error);
+      this.logger.error('Error validating extract result:', error);
       return false;
     }
   }

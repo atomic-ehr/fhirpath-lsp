@@ -1,5 +1,6 @@
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { FHIRResourceService } from './FHIRResourceService';
+import { getLogger } from '../logging/index.js';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -19,6 +20,8 @@ export interface ContextDeclaration {
 }
 
 export class FHIRPathContextService {
+  private logger = getLogger('FHIRPathContextService');
+  
   constructor(private fhirResourceService: FHIRResourceService) {}
 
   /**
@@ -58,10 +61,10 @@ export class FHIRPathContextService {
         const inferredType = await this.inferResourceTypeFromData(context, document.uri);
         if (inferredType) {
           context.resourceType = inferredType;
-          console.log(`Inferred resource type '${inferredType}' from loaded data`);
+          this.logger.debug(`Inferred resource type '${inferredType}' from loaded data`);
         }
       } catch (error) {
-        console.warn('Failed to infer resource type from data:', error);
+        this.logger.warn('Failed to infer resource type from data:', error);
         errors.push(`Failed to infer resource type from data: ${(error as Error).message}`);
       }
     }
@@ -134,7 +137,7 @@ export class FHIRPathContextService {
           if (inferredType) {
             context.resourceType = inferredType;
           }
-          console.log(`Using @inputfile directive: ${declaration.value} (line ${declaration.line})`);
+          this.logger.debug(`Using @inputfile directive: ${declaration.value} (line ${declaration.line})`);
           break;
           
         case 'input':
@@ -147,16 +150,16 @@ export class FHIRPathContextService {
             if (context.inputData && context.inputData.resourceType) {
               context.resourceType = context.inputData.resourceType;
             }
-            console.log(`Using @input directive (line ${declaration.line})`);
+            this.logger.debug(`Using @input directive (line ${declaration.line})`);
           } catch (error) {
             // Invalid JSON - this will be caught in validation
-            console.warn('Invalid JSON in @input directive:', error);
+            this.logger.warn('Invalid JSON in @input directive:', error);
           }
           break;
           
         case 'resource':
           context.resourceType = declaration.value;
-          console.log(`Using @resource directive: ${declaration.value} (line ${declaration.line})`);
+          this.logger.debug(`Using @resource directive: ${declaration.value} (line ${declaration.line})`);
           break;
       }
     }
@@ -269,7 +272,7 @@ export class FHIRPathContextService {
 
         // Check if file exists
         if (!fs.existsSync(inputFilePath)) {
-          console.warn(`Input file not found: ${inputFilePath}`);
+          this.logger.warn(`Input file not found: ${inputFilePath}`);
           return this.getMockDataForResourceType(context.resourceType);
         }
 
@@ -277,15 +280,19 @@ export class FHIRPathContextService {
         const fileContent = fs.readFileSync(inputFilePath, 'utf8');
         const jsonData = JSON.parse(fileContent);
 
+        this.logger.debug(`[FHIRPathContextService] Successfully loaded input file: ${inputFilePath}`);
+        this.logger.debug(`[FHIRPathContextService] Loaded data resourceType: ${jsonData.resourceType}`);
+        this.logger.debug(`[FHIRPathContextService] Loaded data keys:`, Object.keys(jsonData));
+
         // Validate that it's a FHIR resource if resource type is specified  
         if (context.resourceType && jsonData.resourceType !== context.resourceType) {
-          console.warn(`Resource type mismatch: expected ${context.resourceType}, got ${jsonData.resourceType}`);
+          this.logger.warn(`Resource type mismatch: expected ${context.resourceType}, got ${jsonData.resourceType}`);
         }
 
         return jsonData;
 
       } catch (error) {
-        console.error(`Error loading input file ${context.inputFile}:`, error);
+        this.logger.error(`Error loading input file ${context.inputFile}:`, error);
         // Fallback to mock data
         return this.getMockDataForResourceType(context.resourceType);
       }

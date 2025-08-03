@@ -15,7 +15,9 @@ export enum DiagnosticCode {
   MissingArgument = 'E009',
   TooManyArguments = 'E010',
   InvalidContext = 'E011',
-  CircularReference = 'E012'
+  CircularReference = 'E012',
+  TypeInference = 'I001',
+  TypeEvaluation = 'I002'
 }
 
 /**

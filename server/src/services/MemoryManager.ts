@@ -1,4 +1,5 @@
 import { EventEmitter } from 'events';
+import { getLogger } from '../logging/index.js';
 
 export interface MemoryUsage {
   heapUsed: number;
@@ -71,6 +72,7 @@ export class MemoryManager extends EventEmitter implements IMemoryManager {
   
   private pressureHistory: Array<{ timestamp: number; level: MemoryPressureLevel; usage: MemoryUsage }> = [];
   private maxHistorySize = 100;
+  private logger = getLogger('MemoryManager');
 
   getCurrentUsage(): MemoryUsage {
     return process.memoryUsage();
@@ -124,7 +126,7 @@ export class MemoryManager extends EventEmitter implements IMemoryManager {
       global.gc();
     } else {
       // If gc is not exposed, we can suggest running with --expose-gc
-      console.warn('Garbage collection not available. Run with --expose-gc flag for manual GC control.');
+      this.logger.warn('Garbage collection not available. Run with --expose-gc flag for manual GC control.');
     }
   }
 
@@ -222,7 +224,7 @@ export class MemoryManager extends EventEmitter implements IMemoryManager {
       try {
         await handler(usage, level);
       } catch (error) {
-        console.error('Memory pressure handler failed:', error);
+        this.logger.error('Memory pressure handler failed:', error);
         this.emit('handlerError', { error, usage, level });
       }
     });

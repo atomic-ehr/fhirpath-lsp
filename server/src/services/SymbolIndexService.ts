@@ -10,6 +10,7 @@ import {
 
 import { FHIRPathSymbolKind } from '../types/SymbolTypes';
 import { FuzzySearchService } from './FuzzySearchService';
+import { getLogger } from '../logging/index.js';
 
 /**
  * Service for indexing and managing workspace symbols
@@ -19,6 +20,7 @@ export class SymbolIndexService implements ISymbolIndexService {
   private fuzzySearchService: FuzzySearchService;
   private indexingInProgress: Set<string> = new Set();
   private startTime: number = Date.now();
+  private logger = getLogger('SymbolIndexService');
 
   constructor() {
     this.index = {
@@ -40,7 +42,7 @@ export class SymbolIndexService implements ISymbolIndexService {
    * Initialize the index with workspace files
    */
   async initialize(workspaceFolders: string[]): Promise<void> {
-    console.log(`Initializing symbol index for ${workspaceFolders.length} workspace folders`);
+    this.logger.info(`Initializing symbol index for ${workspaceFolders.length} workspace folders`);
 
     // Clear existing index
     await this.clearIndex();
@@ -53,7 +55,7 @@ export class SymbolIndexService implements ISymbolIndexService {
         const files = await this.discoverFHIRPathFiles(folder);
         totalFiles += files.length;
 
-        console.log(`Found ${files.length} FHIRPath files in ${folder}`);
+        this.logger.debug(`Found ${files.length} FHIRPath files in ${folder}`);
 
         // Index files in batches to avoid blocking
         const batchSize = 10;
@@ -67,12 +69,12 @@ export class SymbolIndexService implements ISymbolIndexService {
           }
         }
       } catch (error) {
-        console.error(`Error indexing workspace folder ${folder}:`, error);
+        this.logger.error(`Error indexing workspace folder ${folder}:`, error);
       }
     }
 
     const indexingTime = Date.now() - startTime;
-    console.log(`Index initialization complete: ${this.index.totalSymbols} symbols from ${totalFiles} files in ${indexingTime}ms`);
+    this.logger.info(`Index initialization complete: ${this.index.totalSymbols} symbols from ${totalFiles} files in ${indexingTime}ms`);
   }
 
   /**
@@ -143,7 +145,7 @@ export class SymbolIndexService implements ISymbolIndexService {
     // Clear search cache as index has changed
     this.clearSearchCache();
 
-    console.log(`Updated ${symbols.length} symbols for file: ${uri}`);
+    this.logger.debug(`Updated ${symbols.length} symbols for file: ${uri}`);
   }
 
   /**
@@ -219,7 +221,7 @@ export class SymbolIndexService implements ISymbolIndexService {
     // Clear search cache
     this.clearSearchCache();
 
-    console.log(`Removed ${existingSymbols.length} symbols for file: ${uri}`);
+    this.logger.debug(`Removed ${existingSymbols.length} symbols for file: ${uri}`);
   }
 
   /**
@@ -300,7 +302,7 @@ export class SymbolIndexService implements ISymbolIndexService {
     });
 
     const searchTime = Date.now() - startTime;
-    console.log(`Search for "${query}" found ${results.length} results in ${searchTime}ms`);
+    this.logger.debug(`Search for "${query}" found ${results.length} results in ${searchTime}ms`);
 
     // Cache results (limit cache size)
     if (this.index.searchCache.size > 1000) {
@@ -447,7 +449,7 @@ export class SymbolIndexService implements ISymbolIndexService {
     this.index.indexSize = 0;
     this.clearSearchCache();
 
-    console.log('Symbol index cleared');
+    this.logger.debug('Symbol index cleared');
   }
 
   /**

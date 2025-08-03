@@ -1,5 +1,6 @@
 import { Worker } from 'worker_threads';
 import { EventEmitter } from 'events';
+import { getLogger } from '../logging/index.js';
 
 export interface BackgroundTask<T = any> {
   id: string;
@@ -31,6 +32,7 @@ export class BackgroundProcessor extends EventEmitter {
   private activeTasks = new Map<string, { task: BackgroundTask; worker: Worker; timer?: NodeJS.Timeout }>();
   private options: Required<BackgroundProcessorOptions>;
   private isShuttingDown = false;
+  private logger = getLogger('BackgroundProcessor');
 
   constructor(options: BackgroundProcessorOptions = {}) {
     super();
@@ -46,7 +48,7 @@ export class BackgroundProcessor extends EventEmitter {
       // Create initial worker
       await this.createWorker();
     } catch (error) {
-      console.warn('Background processor failed to start worker threads, running in fallback mode:', error);
+      this.logger.warn('Background processor failed to start worker threads, running in fallback mode:', error);
       // Continue without background processing - operations will run synchronously
     }
   }
@@ -137,7 +139,7 @@ export class BackgroundProcessor extends EventEmitter {
     });
 
     worker.on('error', (error) => {
-      console.error('Background worker error:', error);
+      this.logger.error('Background worker error:', error);
       this.handleWorkerError(worker, error);
     });
 
@@ -175,7 +177,7 @@ export class BackgroundProcessor extends EventEmitter {
         worker = await this.createWorker();
         this.idleWorkers.pop(); // Remove from idle since we just created it
       } catch (error) {
-        console.error('Failed to create worker:', error);
+        this.logger.error('Failed to create worker:', error);
         return;
       }
     }
@@ -318,7 +320,7 @@ export class BackgroundProcessor extends EventEmitter {
 
   private handleWorkerExit(worker: Worker, code: number): void {
     if (code !== 0) {
-      console.error(`Worker exited with code ${code}`);
+      this.logger.error(`Worker exited with code ${code}`);
     }
 
     // Find any active tasks for this worker
@@ -334,7 +336,7 @@ export class BackgroundProcessor extends EventEmitter {
     // Create replacement worker if needed and not shutting down
     if (!this.isShuttingDown && this.workers.length < this.options.maxWorkers) {
       this.createWorker().catch(error => {
-        console.error('Failed to create replacement worker:', error);
+        this.logger.error('Failed to create replacement worker:', error);
       });
     }
   }
@@ -358,7 +360,7 @@ export class BackgroundProcessor extends EventEmitter {
   private async processSynchronously(task: BackgroundTask): Promise<void> {
     try {
       // Process the task synchronously as a fallback when no workers are available
-      console.log(`Processing task ${task.id} synchronously (no workers available)`);
+      this.logger.debug(`Processing task ${task.id} synchronously (no workers available)`);
       
       // For now, just resolve with a mock result since we don't have the actual task processing logic
       // In a real implementation, you would handle different task types here
@@ -368,7 +370,7 @@ export class BackgroundProcessor extends EventEmitter {
         task.callback(result);
       }
     } catch (error) {
-      console.error(`Synchronous task processing failed for ${task.id}:`, error);
+      this.logger.error(`Synchronous task processing failed for ${task.id}:`, error);
       if (task.errorCallback) {
         task.errorCallback(error instanceof Error ? error : new Error(String(error)));
       }

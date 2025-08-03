@@ -1,8 +1,10 @@
 import {
   parse,
   analyze,
+  evaluate,
   FHIRModelProvider
 } from '@atomic-ehr/fhirpath';
+import { getLogger } from '../logging/index.js';
 import type {
   AnalysisResult,
   ASTNode,
@@ -10,7 +12,8 @@ import type {
   Diagnostic as FHIRPathDiagnostic,
   ModelTypeProvider,
   TypeInfo,
-  FHIRModelProviderConfig
+  FHIRModelProviderConfig,
+  EvaluateOptions
 } from '@atomic-ehr/fhirpath';
 
 // Types for parser integration
@@ -59,6 +62,7 @@ export class FHIRPathService {
   private modelProvider?: ModelTypeProvider;
   private isModelProviderInitialized = false;
   private initializationPromise?: Promise<void>;
+  private logger = getLogger('FHIRPathService');
   
   // Performance optimization settings
   private readonly maxCacheSize = 1000;
@@ -158,7 +162,7 @@ export class FHIRPathService {
       this.modelProvider =  provider;
 
     } catch (error) {
-      console.warn('Failed to initialize FHIR model provider:', error);
+      this.logger.warn('Failed to initialize FHIR model provider', { error });
       // Continue without model provider - basic analysis will still work
     }
   }
@@ -197,7 +201,7 @@ export class FHIRPathService {
       return result;
 
     } catch (error) {
-      console.error('Analysis error:', error);
+      this.logger.error('Analysis error:', error);
       return null;
     }
   }
@@ -218,7 +222,7 @@ export class FHIRPathService {
         try {
           inputType = this.modelProvider.getType(resourceType);
         } catch (error) {
-          console.warn(`Failed to get type for ${resourceType}:`, error);
+          this.logger.warn(`Failed to get type for ${resourceType}:`, error);
         }
       }
 
@@ -229,8 +233,27 @@ export class FHIRPathService {
       });
 
     } catch (error) {
-      console.error('Context-aware analysis error:', error);
+      this.logger.error('Context-aware analysis error:', error);
       return null;
+    }
+  }
+
+  /**
+   * Evaluate FHIRPath expression against input data
+   */
+  evaluate(expression: string, input?: unknown, variables?: Record<string, unknown>): any[] {
+    try {
+      const options: EvaluateOptions = {
+        input,
+        variables
+      };
+
+      const result = evaluate(expression, options);
+      
+      return result;
+    } catch (error) {
+      this.logger.error('Evaluation error:', error);
+      return [];
     }
   }
 
@@ -248,7 +271,7 @@ export class FHIRPathService {
       
       return null;
     } catch (error) {
-      console.error('Type inference error:', error);
+      this.logger.error('Type inference error:', error);
       return null;
     }
   }
@@ -344,7 +367,7 @@ export class FHIRPathService {
       }
       return [];
     } catch (error) {
-      console.error('Failed to get resource types from model provider:', error);
+      this.logger.error('Failed to get resource types from model provider:', error);
       return [];
     }
   }
@@ -363,7 +386,7 @@ export class FHIRPathService {
         return this.modelProvider.getElementNames(typeInfo);
       }
     } catch (error) {
-      console.warn(`Failed to get properties for ${resourceType}:`, error);
+      this.logger.warn(`Failed to get properties for ${resourceType}:`, error);
     }
 
     return [];
@@ -396,7 +419,7 @@ export class FHIRPathService {
               cardinality: (elementType as any)?.cardinality
             };
           } catch (error) {
-            console.warn(`Failed to get element details for ${resourceType}.${name}:`, error);
+            this.logger.warn(`Failed to get element details for ${resourceType}.${name}:`, error);
             return {
               name,
               type: 'unknown'
@@ -405,7 +428,7 @@ export class FHIRPathService {
         });
       }
     } catch (error) {
-      console.warn(`Failed to get property details for ${resourceType}:`, error);
+      this.logger.warn(`Failed to get property details for ${resourceType}:`, error);
     }
 
     return [];
@@ -523,7 +546,7 @@ export class FHIRPathService {
       }
     } catch (error) {
       // Background tasks shouldn't fail the main process
-      console.warn('Background analysis failed:', error);
+      this.logger.warn('Background analysis failed:', error);
     }
   }
 

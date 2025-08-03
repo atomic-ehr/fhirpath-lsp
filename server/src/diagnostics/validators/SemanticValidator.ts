@@ -3,6 +3,7 @@ import { TextDocument } from 'vscode-languageserver-textdocument';
 import { BaseValidator } from './BaseValidator';
 import { FHIRPathService } from '../../parser/FHIRPathService';
 import type { TypeInfo, AnalysisResult } from '@atomic-ehr/fhirpath';
+import { DiagnosticCode } from '../DiagnosticBuilder';
 
 export class SemanticValidator extends BaseValidator {
   private typeCache = new Map<string, TypeInfo | null>();
@@ -369,7 +370,7 @@ export class SemanticValidator extends BaseValidator {
           },
           message: `Expression evaluates to: ${expressionType.type}${expressionType.singleton ? '' : '[]'}`,
           source: 'fhirpath-type-info',
-          code: 'type-inference'
+          code: DiagnosticCode.TypeEvaluation
         });
       }
 
@@ -532,7 +533,7 @@ export class SemanticValidator extends BaseValidator {
             },
             message: `Expression type: ${inferredType.type}${inferredType.singleton ? '' : '[]'}`,
             source: 'fhirpath-type-info',
-            code: 'type-inference'
+            code: DiagnosticCode.TypeInference
           });
         }
       }

@@ -15,6 +15,7 @@ import { ModelProviderService } from '../services/ModelProviderService';
 import { cacheService } from '../services/CacheService';
 import { createDebouncedMethod } from '../services/RequestThrottler';
 import { getGlobalProfiler } from '../utils/PerformanceProfiler';
+import { getLogger } from '../logging/index.js';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -68,6 +69,7 @@ export class CompletionProvider {
   private profiler = getGlobalProfiler();
   private debouncedProvideCompletions: (document: TextDocument, params: CompletionParams) => Promise<CompletionItem[]>;
   private completionCache = new Map<string, { items: CompletionItem[]; timestamp: number; context: string; }>();
+  private logger = getLogger('CompletionProvider');
 
   constructor(
     private fhirPathService: FHIRPathService,
@@ -77,6 +79,12 @@ export class CompletionProvider {
     this.functionRegistry = new FHIRPathFunctionRegistry();
     if (fhirResourceService) {
       this.contextService = new FHIRPathContextService(fhirResourceService);
+    }
+
+    if (!this.modelProviderService) {
+      this.logger.warn('ModelProviderService not provided. FHIR completions will be limited.');
+    } else {
+      this.logger.info('Initialized with ModelProviderService for enhanced FHIR completions');
     }
 
     // Create debounced version of completion method
@@ -113,14 +121,6 @@ export class CompletionProvider {
         end: { line: params.position.line, character: params.position.character }
       });
 
-      console.log(`CompletionProvider: request for ${document.uri} at ${params.position.line}:${params.position.character}`);
-      console.log(`Trigger character: ${params.context?.triggerCharacter}`);
-      console.log(`Line text: "${lineText}"`);
-      console.log(`Full line: "${document.getText({
-        start: { line: params.position.line, character: 0 },
-        end: { line: params.position.line + 1, character: 0 }
-      }).replace('\n', '')}"`);
-
       // Generate cache key
       const cacheKey = cacheService.generateCompletionKey(
         document.uri,
@@ -131,34 +131,20 @@ export class CompletionProvider {
       // Check cache first
       const cached = cacheService.getCompletion(cacheKey);
       if (cached) {
-        console.log(`Returning cached completions: ${cached.length} items`);
         return cached;
       }
 
       // Generate completions
       const context = this.analyzeCompletionContext(document, params.position, params.context?.triggerCharacter);
-      console.log(`Context analysis result:`, {
-        isInComment: context.isInComment,
-        isInDirective: context.isInDirective,
-        directiveType: context.directiveType,
-        triggerCharacter: context.triggerCharacter,
-        text: context.text.substring(0, 50) + (context.text.length > 50 ? '...' : '')
-      });
 
       const completions = await this.getCompletionsForContext(context, document);
-      console.log(`Generated ${completions.length} completions`);
-
-      // Log first few completions for debugging
-      if (completions.length > 0) {
-        console.log(`First few completions:`, completions.slice(0, 3).map(c => ({ label: c.label, kind: c.kind })));
-      }
 
       // Cache the result
       cacheService.setCompletion(cacheKey, completions);
 
       return completions;
     } catch (error) {
-      console.error('Error providing completions:', error);
+      this.logger.error('Error providing completions', { error });
       return [];
     }
   }
@@ -177,7 +163,6 @@ export class CompletionProvider {
 
     // Check if we're in a comment/directive context FIRST
     const commentContext = this.analyzeCommentContext(lineText, position.character);
-    console.log(`Comment context for line "${lineText}" at pos ${position.character}:`, commentContext);
 
     // If we're in a directive, use the line text directly for completion
     if (commentContext.isInDirective) {
@@ -346,6 +331,7 @@ export class CompletionProvider {
     const beforeCursor = lineText.substring(0, position);
     const afterCursor = lineText.substring(position);
 
+
     // Find token boundaries - look for the last delimiter
     const tokenStart = Math.max(
       beforeCursor.lastIndexOf(' '),
@@ -493,41 +479,41 @@ export class CompletionProvider {
   private async getCompletionsForContext(context: CompletionContext, document: TextDocument): Promise<CompletionItem[]> {
     const completions: CompletionItem[] = [];
 
-    // Get document context if available
+    // Get document context for enhanced completions
     let documentContext = null;
     if (this.contextService) {
       documentContext = await this.contextService.getCompletionContext(document);
     }
 
+    // Simplified completion logic with clear priorities
     if (context.isInDirective) {
-      // In directive context: provide directive-specific completions
+      // Directive completions (file paths, resource types, etc.)
       completions.push(...this.getDirectiveCompletions(context, document));
     } else if (context.isAfterDot || this.isPartialNavigation(context)) {
-      // After dot or partial navigation: suggest FHIR resource properties first, then functions
+      // Property navigation with method chaining support
       const propertyCompletions = await this.getFHIRResourcePropertyCompletions(context, documentContext);
-      completions.push(...propertyCompletions);
+      const functionCompletions = this.getFunctionCompletions(context);
       
-      // For partial navigation, also include matching functions
-      if (this.isPartialNavigation(context) && !context.isAfterDot) {
-        completions.push(...this.getFunctionCompletions(context));
-      }
+      completions.push(...propertyCompletions, ...functionCompletions);
     } else if (context.isInFunction) {
-      // Inside function: suggest parameters and values
+      // Function parameter completions
       completions.push(...this.getFunctionParameterCompletions(context));
       completions.push(...this.getValueCompletions(context));
     } else if (context.isInBrackets) {
-      // Inside brackets: suggest filter expressions
+      // Filter expression completions
       completions.push(...this.getFilterCompletions(context));
     } else {
-      // General context: suggest everything, prioritizing context resource type
-      completions.push(...this.getFunctionCompletions(context));
-      completions.push(...this.getOperatorCompletions(context));
-      completions.push(...this.getKeywordCompletions(context));
-      completions.push(...this.getFHIRResourceCompletions(context, documentContext));
+      // Root context: resources, functions, operators, keywords
+      const resourceCompletions = this.getFHIRResourceCompletions(context, documentContext);
+      const functionCompletions = this.getFunctionCompletions(context);
+      const operatorCompletions = this.getOperatorCompletions(context);
+      const keywordCompletions = this.getKeywordCompletions(context);
+      
+      completions.push(...resourceCompletions, ...functionCompletions, ...operatorCompletions, ...keywordCompletions);
     }
 
-    // Filter and sort completions based on current input
-    return this.filterAndSortCompletions(completions, context);
+    const finalCompletions = this.filterAndSortCompletions(completions, context);
+    return finalCompletions;
   }
 
   /**
@@ -542,11 +528,10 @@ export class CompletionProvider {
   private getFunctionCompletions(context: CompletionContext): CompletionItem[] {
     const allFunctions = this.functionRegistry.getFunctionCompletionItems();
 
-    // If we're after a dot, prioritize functions that make sense on collections/values
-    if (context.isAfterDot && context.parentExpression) {
-      // Sort functions by relevance based on context
-      return allFunctions.map(func => {
-        // Boost relevance for commonly used functions after properties (but still after properties)
+    // Always ensure functions come after properties (properties use 0_ prefix)
+    return allFunctions.map(func => {
+      // If we're after a dot, prioritize functions that make sense on collections/values
+      if (context.isAfterDot && context.parentExpression) {
         // Use Registry API to get functions by category
         const commonCategories = ['existence', 'navigation', 'manipulation', 'filtering'];
         const funcDetails = this.functionRegistry.getFunction(func.label);
@@ -555,88 +540,133 @@ export class CompletionProvider {
         if (isCommon) {
           return {
             ...func,
-            sortText: `1_${func.label}` // Functions come after properties (0_)
+            sortText: `1_function_${func.label}` // Common functions after properties
           };
         }
         return {
           ...func,
-          sortText: `2_${func.label}` // Less common functions come after common ones
+          sortText: `2_function_${func.label}` // Less common functions
         };
-      });
-    }
+      }
 
-    // For non-dot contexts, ensure functions still come after properties
-    return allFunctions.map(func => ({
-      ...func,
-      sortText: func.sortText || `1_${func.label}` // Ensure functions come after properties
-    }));
+      // For non-dot contexts, functions still come after properties but before operators
+      return {
+        ...func,
+        sortText: `1_function_${func.label}` // Functions after properties (0_), before operators (2_)
+      };
+    });
   }
 
   private getOperatorCompletions(context: CompletionContext): CompletionItem[] {
-    return this.functionRegistry.getOperatorCompletionItems();
-  }
-
-  private getKeywordCompletions(context: CompletionContext): CompletionItem[] {
-    return this.functionRegistry.getKeywordCompletionItems();
-  }
-
-  private getFHIRResourceCompletions(context: CompletionContext, documentContext?: any): CompletionItem[] {
-    // If we have document context, prioritize the context resource type
-    if (documentContext?.resourceType) {
-      return [{
-        label: documentContext.resourceType,
-        kind: CompletionItemKind.Class,
-        detail: `FHIR ${documentContext.resourceType} resource (from context)`,
-        documentation: {
-          kind: MarkupKind.Markdown,
-          value: `FHIR ${documentContext.resourceType} resource type from document context. Access properties using dot notation.`
-        },
-        insertText: documentContext.resourceType,
-        sortText: `0_${documentContext.resourceType}` // Context resource gets highest priority
-      }];
-    }
-
-    // Get FHIR resource types from model provider - now synchronous
-    const fhirResources = this.fhirPathService.getAvailableResourceTypes();
-    
-    if (fhirResources.length === 0) {
-      console.warn('No FHIR resource types available. Make sure model provider is initialized.');
-      return [];
-    }
-
-    return fhirResources.map(resource => ({
-      label: resource,
-      kind: CompletionItemKind.Class,
-      detail: `FHIR ${resource} resource`,
-      documentation: {
-        kind: MarkupKind.Markdown,
-        value: `FHIR ${resource} resource type. Access properties using dot notation.`
-      },
-      insertText: resource,
-      sortText: `1_${resource}` // Resources get high priority
+    const operators = this.functionRegistry.getOperatorCompletionItems();
+    // Ensure operators come after properties (0_) and functions (1_)
+    return operators.map(op => ({
+      ...op,
+      sortText: `3_operator_${op.label}` // Operators after functions
     }));
   }
 
-  private async getFHIRResourcePropertyCompletions(context: CompletionContext, documentContext?: any): Promise<CompletionItem[]> {
-    // Analyze navigation context first
-    const navigationContext = this.analyzeNavigationContext(context, documentContext);
+  private getKeywordCompletions(context: CompletionContext): CompletionItem[] {
+    const keywords = this.functionRegistry.getKeywordCompletionItems();
+    // Ensure keywords come after properties, functions, and operators
+    return keywords.map(kw => ({
+      ...kw,
+      sortText: `4_keyword_${kw.label}` // Keywords last
+    }));
+  }
+
+  private getFHIRResourceCompletions(context: CompletionContext, documentContext?: any): CompletionItem[] {
     
-    // Use ModelProviderService for enhanced completions if available
+    // Require ModelProvider for resource type completions
+    if (!this.modelProviderService || !this.modelProviderService.isInitialized()) {
+      this.logger.warn('ModelProvider not initialized. FHIR resource completions require ModelProvider.');
+      return [];
+    }
+
+    const fhirResources = this.fhirPathService.getAvailableResourceTypes();
+    
+    if (fhirResources.length === 0) {
+      this.logger.error('No FHIR resource types available from ModelProvider.');
+      return [];
+    }
+
+    const completions: CompletionItem[] = [];
+
+    // Check if user is typing a capitalized pattern (indicating resource type)
+    const isCapitalizedPattern = context.currentToken && /^[A-Z]/.test(context.currentToken);
+
+    // Common resource types for prioritization
+    const commonTypes = ['Patient', 'Observation', 'Condition', 'Procedure', 'MedicationRequest', 
+                         'DiagnosticReport', 'Encounter', 'Practitioner', 'Organization'];
+
+    // If we have document context, prioritize the context resource type
+    if (documentContext?.resourceType && fhirResources.includes(documentContext.resourceType)) {
+      completions.push({
+        label: documentContext.resourceType,
+        kind: CompletionItemKind.Class,
+        detail: `FHIR ${documentContext.resourceType} resource (context)`,
+        documentation: {
+          kind: MarkupKind.Markdown,
+          value: `**${documentContext.resourceType}** resource type from document context.\n\nAccess properties using dot notation.`
+        },
+        insertText: documentContext.resourceType,
+        sortText: `0_${documentContext.resourceType}` // Context resource gets highest priority
+      });
+    }
+
+    // Add all other resource types with smart prioritization
+    const otherResources = documentContext?.resourceType 
+      ? fhirResources.filter(r => r !== documentContext.resourceType)
+      : fhirResources;
+
+    otherResources.forEach(resource => {
+      let priority = '3_'; // Default priority
+      
+      if (isCapitalizedPattern || !context.currentToken) {
+        // Prioritize common resource types when user types capitalized chars
+        if (commonTypes.includes(resource)) {
+          priority = '1_';
+        } else {
+          priority = '2_';
+        }
+      }
+
+      completions.push({
+        label: resource,
+        kind: CompletionItemKind.Class,
+        detail: `FHIR ${resource} resource`,
+        documentation: {
+          kind: MarkupKind.Markdown,
+          value: `**${resource}** resource type from FHIR model.\n\nAccess properties using dot notation.`
+        },
+        insertText: resource,
+        sortText: `${priority}${resource}`
+      });
+    });
+
+    return completions;
+  }
+
+  private async getFHIRResourcePropertyCompletions(context: CompletionContext, documentContext?: any): Promise<CompletionItem[]> {
+    // Use ModelProviderService for enhanced completions
     if (this.modelProviderService && this.modelProviderService.isInitialized()) {
       return this.getEnhancedFHIRCompletions(context, documentContext);
     }
 
-    // Use navigation-aware completions
+    // Analyze navigation context for fallback
+    const navigationContext = this.analyzeNavigationContext(context, documentContext);
     if (navigationContext.isNavigable) {
       return this.getNavigationCompletions(navigationContext, context);
     }
 
-    // Fallback to old implementation if ModelProviderService not available
-    return this.getLegacyFHIRResourcePropertyCompletions(context, documentContext);
+    // No ModelProvider available - require ModelProvider for completions
+    this.logger.warn('ModelProviderService not initialized. FHIR property completions require ModelProvider.');
+    return [];
   }
 
   private async getEnhancedFHIRCompletions(context: CompletionContext, documentContext?: any): Promise<CompletionItem[]> {
     try {
+      
       // Check enhanced cache first
       const cached = this.getCachedEnhancedCompletions(context);
       if (cached) {
@@ -655,14 +685,16 @@ export class CompletionProvider {
       );
 
       if (!navigation.isValid) {
-        console.warn('Navigation failed:', navigation.errors);
+        this.logger.warn('Navigation failed', { errors: navigation.errors });
         return [];
       }
+
 
       const completions: CompletionItem[] = [];
 
       // Add regular properties
-      completions.push(...await this.createPropertyCompletions(navigation.finalType, expressionContext));
+      const propertyCompletions = await this.createPropertyCompletions(navigation.finalType, expressionContext);
+      completions.push(...propertyCompletions);
 
       // Add choice type expansions
       // Check if the last property in the navigation path is a choice type
@@ -681,84 +713,40 @@ export class CompletionProvider {
 
       return completions;
     } catch (error) {
-      console.error('Error in enhanced FHIR completions:', error);
+      this.logger.error('Error in enhanced FHIR completions:', error);
       return [];
     }
   }
 
-  private getLegacyFHIRResourcePropertyCompletions(context: CompletionContext, documentContext?: any): CompletionItem[] {
-    // Check if we're at the beginning of an expression without any parent context
-    const isRootContext = !context.parentExpression || context.parentExpression.trim() === '';
 
-    if (isRootContext) {
-      // If no parent expression but we have document context, suggest root properties
-      if (documentContext?.resourceType) {
-        return this.getFHIRPropertiesForResource(documentContext.resourceType, true);
-      }
 
-      // No document context, return empty - no fallback to hardcoded properties
-      console.warn('No document context available for property completion. Consider providing resource type context.');
+  private getFHIRPropertiesForResource(resourceType: string): CompletionItem[] {
+    // Require ModelProvider for all property completions
+    if (!this.modelProviderService || !this.modelProviderService.isInitialized()) {
+      this.logger.warn(`ModelProvider not initialized. Cannot get properties for ${resourceType}.`);
       return [];
     }
 
-    // Determine the resource type from parent expression or use document context
-    let resourceType = context.parentExpression ? this.extractResourceType(context.parentExpression) : null;
-    if (!resourceType && documentContext?.resourceType) {
-      // If the parent expression doesn't contain an explicit resource type,
-      // but we have document context, treat it as a property access on the context resource
-      resourceType = documentContext.resourceType;
-    }
-
-    if (!resourceType) {
-      console.warn('Unable to determine resource type for property completion.');
-      return [];
-    }
-
-    return this.getFHIRPropertiesForResource(resourceType);
-  }
-
-  private extractResourceType(expression: string): string | null {
-    // Extract resource type from expressions like "Patient", "Patient.name", etc.
-    // Handle complex expressions by getting the root identifier
-    const trimmed = expression.trim();
-    if (!trimmed) return null;
-
-    // Match the first identifier (resource type)
-    const match = trimmed.match(/^([A-Z][a-zA-Z0-9]*)/);
-    if (match) {
-      const resourceType = match[1];
-      // Check if it's a known FHIR resource type using model provider
-      if (this.fhirPathService.isValidResourceType(resourceType)) {
-        return resourceType;
-      }
-    }
-
-    return null;
-  }
-
-  // Removed getCommonFHIRProperties - no more hardcoded fallbacks
-
-  private getFHIRPropertiesForResource(resourceType: string, isContextResource: boolean = false): CompletionItem[] {
-    // Get properties from model provider - now synchronous
     const properties = this.fhirPathService.getResourcePropertyDetails(resourceType);
     
     if (properties.length === 0) {
-      console.warn(`No properties available for resource type: ${resourceType}. Make sure model provider is initialized.`);
+      this.logger.warn(`No properties available for resource type: ${resourceType}. Check ModelProvider initialization.`);
       return [];
     }
 
     return properties.map(prop => ({
       label: prop.name,
       kind: CompletionItemKind.Property,
-      detail: prop.type ? `${resourceType}.${prop.name}: ${prop.type}` : `${resourceType}.${prop.name}`,
+      detail: `${resourceType}.${prop.name}: ${prop.type || 'unknown'}`,
       documentation: {
         kind: MarkupKind.Markdown,
-        value: `**${prop.name}**${prop.type ? ` (${prop.type})` : ''}${prop.cardinality ? ` [${prop.cardinality}]` : ''}\n\n${prop.description || 'No description available'}`
+        value: `**${prop.name}**${prop.type ? ` (${prop.type})` : ''}${prop.cardinality ? ` [${prop.cardinality}]` : ''}\n\n${prop.description || 'Property from FHIR model'}`
       },
       insertText: prop.name,
-      sortText: isContextResource ? `0_${prop.name}` : `0_${prop.name}` // All properties get high priority
+      sortText: `0_${prop.name}` // Properties get highest priority
     }));
   }
+
 
   private getFunctionParameterCompletions(context: CompletionContext): CompletionItem[] {
     // Analyze which function we're inside and suggest appropriate parameters
@@ -844,7 +832,7 @@ export class CompletionProvider {
       detail: 'FHIR value',
       documentation: val.description,
       insertText: val.value,
-      sortText: `3_${val.value}`
+      sortText: `5_value_${val.value}` // Values after all other completions
     }));
   }
 
@@ -864,17 +852,15 @@ export class CompletionProvider {
       detail: 'Filter pattern',
       documentation: filter.description,
       insertText: filter.pattern,
-      sortText: `2_${filter.pattern}`
+      sortText: `6_filter_${filter.pattern}` // Filter patterns after values
     }));
   }
 
   private getDirectiveCompletions(context: CompletionContext, document: TextDocument): CompletionItem[] {
-    console.log(`Getting directive completions for directiveType: ${context.directiveType}`);
     const completions: CompletionItem[] = [];
 
     // If no directive type yet, suggest all available directives
     if (!context.directiveType) {
-      console.log('No directive type, providing all directive names');
 
       // Always show all directives - let "last wins" behavior handle conflicts
       const directives = [
@@ -914,32 +900,25 @@ export class CompletionProvider {
       ];
 
       completions.push(...directives);
-      console.log(`Added ${directives.length} directive completions (all directives always available)`);
     } else {
       // Provide specific completions based on directive type
-      console.log(`Providing completions for directive type: ${context.directiveType}`);
       switch (context.directiveType) {
         case 'inputfile':
           const fileCompletions = this.getFilePathCompletions(document, context.currentToken);
           completions.push(...fileCompletions);
-          console.log(`Added ${fileCompletions.length} file path completions for path: "${context.currentToken}"`);
           break;
         case 'resource':
-          const resourceCompletions = this.getFHIRResourceTypeCompletions();
+          const resourceCompletions = this.getFHIRResourceCompletions(context);
           completions.push(...resourceCompletions);
-          console.log(`Added ${resourceCompletions.length} resource type completions`);
           break;
         case 'input':
           const inputCompletions = this.getInlineInputCompletions();
           completions.push(...inputCompletions);
-          console.log(`Added ${inputCompletions.length} input template completions`);
           break;
         default:
-          console.log(`Unknown directive type: ${context.directiveType}`);
       }
     }
 
-    console.log(`Total directive completions: ${completions.length}`);
     return completions;
   }
 
@@ -1053,7 +1032,7 @@ export class CompletionProvider {
       }
 
     } catch (error) {
-      console.error('Error reading file system for completions:', error);
+      this.logger.error('Error reading file system for completions:', error);
 
       // Fallback to static suggestions if file system reading fails
       const fallbackPatterns = [
@@ -1079,27 +1058,6 @@ export class CompletionProvider {
     return completions;
   }
 
-  private getFHIRResourceTypeCompletions(): CompletionItem[] {
-    // Now synchronous - get resource types from model provider
-    const fhirResourceTypes = this.fhirPathService.getAvailableResourceTypes();
-    
-    if (fhirResourceTypes.length === 0) {
-      console.warn('No FHIR resource types available for directive completion. Make sure model provider is initialized.');
-      return [];
-    }
-
-    return fhirResourceTypes.map(resourceType => ({
-      label: resourceType,
-      kind: CompletionItemKind.Class,
-      detail: `FHIR ${resourceType} resource type`,
-      documentation: {
-        kind: MarkupKind.Markdown,
-        value: `FHIR ${resourceType} resource type for context declaration.`
-      },
-      insertText: resourceType,
-      sortText: `0_${resourceType}`
-    }));
-  }
 
   private getInlineInputCompletions(): CompletionItem[] {
     const templates = [
@@ -1130,7 +1088,10 @@ export class CompletionProvider {
   private parseExpressionContext(context: CompletionContext, documentContext?: any): ExpressionContext {
     // Parse complex expressions to understand current navigation state
     const expression = context.text.trim();
-    const match = expression.match(/^([A-Z]\w+)(?:\.(\w+(?:\.\w+)*))?/);
+    
+    
+    // Enhanced regex to capture more patterns, including incomplete paths
+    const match = expression.match(/^([A-Z][a-zA-Z0-9_]*)(\.([a-zA-Z0-9_]+(?:\.[a-zA-Z0-9_]*)*)?\.?)?/);
 
     if (!match) {
       // Check if we have document context for root-level property access
@@ -1147,7 +1108,25 @@ export class CompletionProvider {
     }
 
     const resourceType = match[1];
-    const propertyPath = match[2] ? match[2].split('.') : [];
+    let propertyPath: string[] = [];
+    
+    if (match[3]) {
+      // Split the property path, but handle incomplete paths (ending with '.')
+      propertyPath = match[3].split('.').filter(part => part.length > 0);
+    }
+    
+    // Special handling for when user is typing after a dot
+    if (context.isAfterDot) {
+      if (context.currentToken && context.currentToken.length > 0) {
+        // User is typing a new property after dot - the currentToken is the partial property being typed
+        // Don't include it in propertyPath yet, as we want completions for this partial input
+      } else {
+        // User just typed a dot - we want completions for the next level
+      }
+    } else if (context.currentToken && !propertyPath.includes(context.currentToken)) {
+      // If we have a current token that's not in the path, it might be a partial property
+    }
+
 
     return {
       resourceType,
@@ -1162,10 +1141,15 @@ export class CompletionProvider {
    * Create property completions with enhanced metadata
    */
   private async createPropertyCompletions(typeInfo: any, expressionContext: ExpressionContext): Promise<CompletionItem[]> {
-    if (!this.modelProviderService) return [];
+    if (!this.modelProviderService) {
+      this.logger.warn(`🚫 createPropertyCompletions: ModelProviderService not available`);
+      return [];
+    }
 
     try {
+      
       const availableProperties = await this.getAvailableProperties(typeInfo);
+      
       const enhanced = await this.modelProviderService.getEnhancedTypeInfo(typeInfo.name);
 
       const completions: CompletionItem[] = [];
@@ -1173,7 +1157,9 @@ export class CompletionProvider {
       for (const propertyName of availableProperties) {
         try {
           const propertyType = await this.getPropertyType(typeInfo, propertyName);
-          if (!propertyType) continue;
+          if (!propertyType) {
+            continue;
+          }
 
           const completion = await this.createEnhancedPropertyCompletion(
             propertyName,
@@ -1184,13 +1170,13 @@ export class CompletionProvider {
 
           completions.push(completion);
         } catch (error) {
-          console.warn(`Failed to create completion for property ${propertyName}:`, error);
+          this.logger.warn(`Failed to create completion for property ${propertyName}:`, error);
         }
       }
 
       return completions;
     } catch (error) {
-      console.error('Error creating property completions:', error);
+      this.logger.error('Error creating property completions:', error);
       return [];
     }
   }
@@ -1225,7 +1211,7 @@ export class CompletionProvider {
         data: { isChoice: true, baseProperty }
       }));
     } catch (error) {
-      console.error('Error creating choice completions:', error);
+      this.logger.error('Error creating choice completions:', error);
       return [];
     }
   }
@@ -1252,14 +1238,14 @@ export class CompletionProvider {
             const completion = await this.createInheritedPropertyCompletion(property, baseType, expressionContext);
             inheritedCompletions.push(completion);
           } catch (error) {
-            console.warn(`Failed to create inherited completion for ${property}:`, error);
+            this.logger.warn(`Failed to create inherited completion for ${property}:`, error);
           }
         }
       }
 
       return inheritedCompletions;
     } catch (error) {
-      console.error('Error creating inherited completions:', error);
+      this.logger.error('Error creating inherited completions:', error);
       return [];
     }
   }
@@ -1430,22 +1416,18 @@ export class CompletionProvider {
    * Get available properties for a type
    */
   private async getAvailableProperties(typeInfo: any): Promise<string[]> {
-    if (!this.modelProviderService) return [];
+    if (!this.modelProviderService) {
+      this.logger.warn('getAvailableProperties: ModelProviderService not available');
+      return [];
+    }
 
     try {
-      // Use ModelProvider method if available
-      if (typeof (this.modelProviderService as any).modelProvider?.getElementNames === 'function') {
-        return (this.modelProviderService as any).modelProvider.getElementNames(typeInfo) || [];
-      }
-
-      // Fallback to TypeInfo properties
-      if ((typeInfo as any).properties instanceof Map) {
-        return Array.from(((typeInfo as any).properties as Map<string, any>).keys());
-      }
-
-      return [];
+      
+      // Use ModelProviderService method which handles the proper ModelProvider access
+      const properties = await this.modelProviderService.getAvailableProperties(typeInfo);
+      return properties;
     } catch (error) {
-      console.warn(`Failed to get available properties for type ${typeInfo?.name}:`, error);
+      this.logger.warn(`Failed to get available properties for type ${typeInfo?.name}:`, error);
       return [];
     }
   }
@@ -1469,7 +1451,7 @@ export class CompletionProvider {
 
       return null;
     } catch (error) {
-      console.warn(`Failed to get property type for ${propertyName}:`, error);
+      this.logger.warn(`Failed to get property type for ${propertyName}:`, error);
       return null;
     }
   }
@@ -1573,151 +1555,52 @@ export class CompletionProvider {
       return [];
     }
 
-    // For deep navigation, we need to determine the type at each level
-    // For now, we'll provide basic navigation support
+    // Root level - get properties for the resource type
     if (navigationContext.depth === 0) {
-      // Root level - get properties for the resource type
-      return this.getFHIRPropertiesForResource(navigationContext.resourceType, true);
+      return this.getFHIRPropertiesForResource(navigationContext.resourceType);
     }
 
-    // For deeper levels, we need to know the type of the parent property
-    // This is where ModelProviderService would be most helpful
-    // For now, we'll try to provide common sub-properties based on known patterns
-    return this.getCommonNestedProperties(navigationContext);
-  }
-
-  /**
-   * Get common nested properties based on navigation patterns
-   */
-  private getCommonNestedProperties(navigationContext: NavigationContext): CompletionItem[] {
-    const { propertyPath, resourceType } = navigationContext;
-    if (!propertyPath || propertyPath.length === 0) {
+    // For deeper levels, require ModelProviderService
+    if (!this.modelProviderService || !this.modelProviderService.isInitialized()) {
+      this.logger.warn('ModelProvider required for deep navigation completions');
       return [];
     }
 
-    const lastProperty = propertyPath[propertyPath.length - 1];
-    const completions: CompletionItem[] = [];
+    try {
+      const navigationResult = await this.modelProviderService.navigatePropertyPath(
+        navigationContext.resourceType,
+        navigationContext.propertyPath || []
+      );
 
-    // Handle common nested structures
-    switch (lastProperty) {
-      case 'name':
-        // HumanName properties
-        const nameProperties = ['use', 'text', 'family', 'given', 'prefix', 'suffix', 'period'];
-        return nameProperties.map(prop => ({
+      if (navigationResult.isValid && navigationResult.finalType) {
+        const properties = await this.modelProviderService.getAvailableProperties(navigationResult.finalType);
+        return properties.map(prop => ({
           label: prop,
           kind: CompletionItemKind.Property,
-          detail: `${resourceType}.name.${prop}`,
-          documentation: {
-            kind: MarkupKind.Markdown,
-            value: `**${prop}** property of HumanName`
-          },
+          detail: `Property on ${navigationResult.finalType.name}`,
           insertText: prop,
           sortText: `0_${prop}`
         }));
-
-      case 'address':
-        // Address properties
-        const addressProperties = ['use', 'type', 'text', 'line', 'city', 'district', 'state', 'postalCode', 'country', 'period'];
-        return addressProperties.map(prop => ({
-          label: prop,
-          kind: CompletionItemKind.Property,
-          detail: `${resourceType}.address.${prop}`,
-          documentation: {
-            kind: MarkupKind.Markdown,
-            value: `**${prop}** property of Address`
-          },
-          insertText: prop,
-          sortText: `0_${prop}`
-        }));
-
-      case 'telecom':
-        // ContactPoint properties
-        const telecomProperties = ['system', 'value', 'use', 'rank', 'period'];
-        return telecomProperties.map(prop => ({
-          label: prop,
-          kind: CompletionItemKind.Property,
-          detail: `${resourceType}.telecom.${prop}`,
-          documentation: {
-            kind: MarkupKind.Markdown,
-            value: `**${prop}** property of ContactPoint`
-          },
-          insertText: prop,
-          sortText: `0_${prop}`
-        }));
-
-      case 'identifier':
-        // Identifier properties
-        const identifierProperties = ['use', 'type', 'system', 'value', 'period', 'assigner'];
-        return identifierProperties.map(prop => ({
-          label: prop,
-          kind: CompletionItemKind.Property,
-          detail: `${resourceType}.identifier.${prop}`,
-          documentation: {
-            kind: MarkupKind.Markdown,
-            value: `**${prop}** property of Identifier`
-          },
-          insertText: prop,
-          sortText: `0_${prop}`
-        }));
-
-      case 'code':
-      case 'coding':
-        // Coding properties
-        const codingProperties = ['system', 'version', 'code', 'display', 'userSelected'];
-        return codingProperties.map(prop => ({
-          label: prop,
-          kind: CompletionItemKind.Property,
-          detail: `Coding.${prop}`,
-          documentation: {
-            kind: MarkupKind.Markdown,
-            value: `**${prop}** property of Coding`
-          },
-          insertText: prop,
-          sortText: `0_${prop}`
-        }));
-
-      case 'period':
-        // Period properties
-        const periodProperties = ['start', 'end'];
-        return periodProperties.map(prop => ({
-          label: prop,
-          kind: CompletionItemKind.Property,
-          detail: `Period.${prop}`,
-          documentation: {
-            kind: MarkupKind.Markdown,
-            value: `**${prop}** property of Period`
-          },
-          insertText: prop,
-          sortText: `0_${prop}`
-        }));
-
-      case 'reference':
-        // Reference properties
-        const referenceProperties = ['reference', 'type', 'identifier', 'display'];
-        return referenceProperties.map(prop => ({
-          label: prop,
-          kind: CompletionItemKind.Property,
-          detail: `Reference.${prop}`,
-          documentation: {
-            kind: MarkupKind.Markdown,
-            value: `**${prop}** property of Reference`
-          },
-          insertText: prop,
-          sortText: `0_${prop}`
-        }));
-
-      default:
-        // For unknown properties, return empty array
-        // Functions will be added by the calling context if needed
+      } else {
+        this.logger.warn('Navigation failed for path', {
+          resourceType: navigationContext.resourceType,
+          path: navigationContext.propertyPath,
+          errors: navigationResult.errors
+        });
         return [];
+      }
+    } catch (error) {
+      this.logger.error('ModelProvider navigation error', { error });
+      return [];
     }
   }
+
 
   private filterAndSortCompletions(
     completions: CompletionItem[],
     context: CompletionContext
   ): CompletionItem[] {
-    // Special handling for directive contexts - don't limit completions even if no currentToken
+    // Handle empty or missing currentToken
     if (!context.currentToken || context.currentToken.length === 0) {
       // For directive contexts (especially @inputfile), show all completions without filtering
       if (context.isInDirective) {
@@ -1726,7 +1609,10 @@ export class CompletionProvider {
           return a.sortText?.localeCompare(b.sortText || '') || a.label.localeCompare(b.label);
         }).slice(0, 50);
       }
-      return completions.slice(0, 50); // Limit to 50 items when no filter for non-directive contexts
+      // For non-directive contexts with no token, show all completions sorted by priority
+      return completions.sort((a, b) => {
+        return a.sortText?.localeCompare(b.sortText || '') || a.label.localeCompare(b.label);
+      }).slice(0, 50);
     }
 
     let filtered: CompletionItem[];
@@ -1779,10 +1665,37 @@ export class CompletionProvider {
         item.label.toLowerCase().startsWith(context.currentToken!.toLowerCase())
       );
     } else {
-      // For regular completions, use prefix matching
-      filtered = completions.filter(item =>
-        item.label.toLowerCase().startsWith(context.currentToken!.toLowerCase())
-      );
+      // Enhanced filtering for regular completions
+      const currentToken = context.currentToken?.toLowerCase() || '';
+      
+      // Check if user is typing a capitalized pattern (likely a resource type)
+      const isCapitalizedInput = context.currentToken && /^[A-Z]/.test(context.currentToken);
+      
+      
+      if (isCapitalizedInput) {
+        // For capitalized input, prioritize exact prefix matches for resource types
+        filtered = completions.filter(item => {
+          const itemLabel = item.label.toLowerCase();
+          
+          // Exact prefix match gets highest priority
+          if (itemLabel.startsWith(currentToken)) {
+            return true;
+          }
+          
+          // For resource types (classes), also allow fuzzy matching
+          if (item.kind === CompletionItemKind.Class) {
+            return itemLabel.includes(currentToken);
+          }
+          
+          // For properties and functions, use prefix matching only
+          return itemLabel.startsWith(currentToken);
+        });
+      } else {
+        // For regular completions, use prefix matching
+        filtered = completions.filter(item =>
+          item.label.toLowerCase().startsWith(currentToken)
+        );
+      }
     }
 
     // Sort by relevance: exact match first, then by sortText, then alphabetical
@@ -1792,6 +1705,16 @@ export class CompletionProvider {
 
       if (aExact && !bExact) return -1;
       if (!aExact && bExact) return 1;
+
+      // For capitalized input, prioritize resource types (classes)
+      const isCapitalizedInput = context.currentToken && /^[A-Z]/.test(context.currentToken);
+      if (isCapitalizedInput) {
+        const aIsClass = a.kind === CompletionItemKind.Class;
+        const bIsClass = b.kind === CompletionItemKind.Class;
+        
+        if (aIsClass && !bIsClass) return -1;
+        if (!aIsClass && bIsClass) return 1;
+      }
 
       return a.sortText?.localeCompare(b.sortText || '') || a.label.localeCompare(b.label);
     }).slice(0, 50); // Increased limit for file path completions
@@ -1830,14 +1753,19 @@ export class CompletionProvider {
         if (this.modelProviderService) {
           // Try to get the choice type from the model provider
           const choiceTypeName = propertyInfo.name;
-          const choiceTypeInfo = await this.modelProviderService.modelProvider?.getType?.(choiceTypeName);
-          return choiceTypeInfo || propertyInfo;
+          try {
+            const choiceTypeInfo = await this.modelProviderService.getEnhancedTypeInfo(choiceTypeName);
+            return choiceTypeInfo?.type || propertyInfo;
+          } catch (error) {
+            this.logger.warn(`Failed to get choice type info for ${choiceTypeName}:`, error);
+            return propertyInfo;
+          }
         }
       }
 
       return propertyInfo.type === 'choice' ? propertyInfo : null;
     } catch (error) {
-      console.warn('Failed to get last property from navigation:', error);
+      this.logger.warn('Failed to get last property from navigation:', error);
       return null;
     }
   }
@@ -1867,7 +1795,7 @@ export class CompletionProvider {
 
       return null;
     } catch (error) {
-      console.warn('Failed to extract base property from choice:', error);
+      this.logger.warn('Failed to extract base property from choice:', error);
       return null;
     }
   }

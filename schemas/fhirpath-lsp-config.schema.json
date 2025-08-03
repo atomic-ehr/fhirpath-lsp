@@ -1,0 +1,588 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.atomic-ehr.com/fhirpath-lsp/config.schema.json",
+  "title": "FHIRPath LSP Configuration",
+  "description": "Configuration schema for FHIRPath Language Server Protocol extension",
+  "type": "object",
+  "properties": {
+    "enabled": {
+      "type": "boolean",
+      "default": true,
+      "description": "Enable/disable the FHIRPath LSP extension"
+    },
+    "version": {
+      "type": "string",
+      "description": "Configuration version",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "diagnostics": {
+      "type": "object",
+      "description": "Diagnostic analysis configuration",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable diagnostic analysis"
+        },
+        "performance": {
+          "type": "object",
+          "description": "Performance analyzer settings",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": true,
+              "description": "Enable performance analysis"
+            },
+            "maxComplexity": {
+              "type": "number",
+              "minimum": 1,
+              "maximum": 50,
+              "default": 10,
+              "description": "Maximum allowed expression complexity"
+            },
+            "maxNestingDepth": {
+              "type": "number",
+              "minimum": 1,
+              "maximum": 20,
+              "default": 5,
+              "description": "Maximum allowed nesting depth"
+            },
+            "flagRedundantOperations": {
+              "type": "boolean",
+              "default": true,
+              "description": "Flag redundant operations"
+            },
+            "flagExpensiveOperations": {
+              "type": "boolean",
+              "default": true,
+              "description": "Flag expensive operations"
+            }
+          },
+          "additionalProperties": false
+        },
+        "codeQuality": {
+          "type": "object",
+          "description": "Code quality analyzer settings",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": true,
+              "description": "Enable code quality analysis"
+            },
+            "maxLineLength": {
+              "type": "number",
+              "minimum": 50,
+              "maximum": 200,
+              "default": 100,
+              "description": "Maximum line length"
+            },
+            "enforceNamingConventions": {
+              "type": "boolean",
+              "default": false,
+              "description": "Enforce naming conventions"
+            },
+            "flagMagicValues": {
+              "type": "boolean",
+              "default": true,
+              "description": "Flag magic values in expressions"
+            },
+            "requireDocumentation": {
+              "type": "boolean",
+              "default": false,
+              "description": "Require documentation comments"
+            }
+          },
+          "additionalProperties": false
+        },
+        "fhirBestPractices": {
+          "type": "object",
+          "description": "FHIR best practices analyzer settings",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": true,
+              "description": "Enable FHIR best practices analysis"
+            },
+            "enforceTypeSafety": {
+              "type": "boolean",
+              "default": true,
+              "description": "Enforce type safety in expressions"
+            },
+            "flagDeprecatedElements": {
+              "type": "boolean",
+              "default": true,
+              "description": "Flag usage of deprecated FHIR elements"
+            },
+            "suggestOptimizations": {
+              "type": "boolean",
+              "default": true,
+              "description": "Suggest expression optimizations"
+            },
+            "checkCardinality": {
+              "type": "boolean",
+              "default": false,
+              "description": "Check FHIR element cardinality constraints"
+            }
+          },
+          "additionalProperties": false
+        },
+        "maintainability": {
+          "type": "object",
+          "description": "Maintainability analyzer settings",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": true,
+              "description": "Enable maintainability analysis"
+            },
+            "maxFunctionComplexity": {
+              "type": "number",
+              "minimum": 1,
+              "maximum": 30,
+              "default": 8,
+              "description": "Maximum function complexity"
+            },
+            "flagDuplication": {
+              "type": "boolean",
+              "default": true,
+              "description": "Flag code duplication"
+            },
+            "enforceConsistency": {
+              "type": "boolean",
+              "default": true,
+              "description": "Enforce coding consistency"
+            }
+          },
+          "additionalProperties": false
+        },
+        "severity": {
+          "type": "object",
+          "description": "Diagnostic severity levels",
+          "properties": {
+            "performance": {
+              "type": "number",
+              "enum": [1, 2, 3, 4],
+              "default": 2,
+              "description": "Performance diagnostic severity (1=Error, 2=Warning, 3=Info, 4=Hint)"
+            },
+            "codeQuality": {
+              "type": "number", 
+              "enum": [1, 2, 3, 4],
+              "default": 3,
+              "description": "Code quality diagnostic severity"
+            },
+            "fhirBestPractices": {
+              "type": "number",
+              "enum": [1, 2, 3, 4],
+              "default": 2,
+              "description": "FHIR best practices diagnostic severity"
+            },
+            "maintainability": {
+              "type": "number",
+              "enum": [1, 2, 3, 4],
+              "default": 3,
+              "description": "Maintainability diagnostic severity"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "providers": {
+      "type": "object",
+      "description": "Language server provider configuration",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable LSP providers"
+        },
+        "modelProvider": {
+          "type": "object",
+          "description": "FHIR model provider configuration",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": true,
+              "description": "Enable FHIR model provider"
+            },
+            "required": {
+              "type": "boolean",
+              "default": false,
+              "description": "Require model provider for LSP functionality"
+            },
+            "fhirModelProvider": {
+              "type": "object",
+              "description": "FHIR model provider settings",
+              "properties": {
+                "packages": {
+                  "type": "array",
+                  "description": "FHIR packages to load",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string",
+                        "description": "Package name (e.g., 'hl7.fhir.r4.core')"
+                      },
+                      "version": {
+                        "type": "string",
+                        "description": "Package version (e.g., '4.0.1')"
+                      }
+                    },
+                    "required": ["name", "version"],
+                    "additionalProperties": false
+                  },
+                  "default": [{"name": "hl7.fhir.r4.core", "version": "4.0.1"}]
+                },
+                "cacheDir": {
+                  "type": "string",
+                  "default": ".fhir-cache",
+                  "description": "Directory for FHIR package cache"
+                },
+                "registryUrl": {
+                  "type": "string",
+                  "format": "uri",
+                  "default": "https://fs.get-ig.org/pkgs",
+                  "description": "FHIR package registry URL"
+                }
+              },
+              "additionalProperties": false
+            },
+            "caching": {
+              "type": "object",
+              "description": "Model provider caching settings",
+              "properties": {
+                "enabled": {
+                  "type": "boolean",
+                  "default": true,
+                  "description": "Enable caching"
+                },
+                "ttl": {
+                  "type": "number",
+                  "minimum": 60000,
+                  "maximum": 3600000,
+                  "default": 600000,
+                  "description": "Cache time-to-live in milliseconds"
+                },
+                "maxSize": {
+                  "type": "number",
+                  "minimum": 100,
+                  "maximum": 10000,
+                  "default": 1000,
+                  "description": "Maximum cache size"
+                }
+              },
+              "additionalProperties": false
+            },
+            "performance": {
+              "type": "object",
+              "description": "Model provider performance settings",
+              "properties": {
+                "enableOptimizations": {
+                  "type": "boolean",
+                  "default": true,
+                  "description": "Enable performance optimizations"
+                },
+                "batchSize": {
+                  "type": "number",
+                  "minimum": 10,
+                  "maximum": 1000,
+                  "default": 50,
+                  "description": "Batch size for operations"
+                },
+                "concurrentRequests": {
+                  "type": "number",
+                  "minimum": 1,
+                  "maximum": 50,
+                  "default": 10,
+                  "description": "Maximum concurrent requests"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "enhanced": {
+          "type": "object",
+          "description": "Enhanced provider features",
+          "properties": {
+            "completion": {
+              "type": "object",
+              "description": "Enhanced completion settings",
+              "properties": {
+                "enabled": {
+                  "type": "boolean",
+                  "default": true,
+                  "description": "Enable enhanced completions"
+                },
+                "enhanced": {
+                  "type": "boolean",
+                  "default": true,
+                  "description": "Enable advanced completion features"
+                },
+                "choiceTypes": {
+                  "type": "boolean",
+                  "default": true,
+                  "description": "Enable choice type completions"
+                },
+                "inheritance": {
+                  "type": "boolean",
+                  "default": true,
+                  "description": "Enable inheritance-based completions"
+                },
+                "deepNavigation": {
+                  "type": "boolean",
+                  "default": true,
+                  "description": "Enable deep navigation completions"
+                },
+                "maxCompletions": {
+                  "type": "number",
+                  "minimum": 10,
+                  "maximum": 500,
+                  "default": 100,
+                  "description": "Maximum number of completions"
+                }
+              },
+              "additionalProperties": false
+            },
+            "hover": {
+              "type": "object",
+              "description": "Enhanced hover settings",
+              "properties": {
+                "enabled": {
+                  "type": "boolean",
+                  "default": true,
+                  "description": "Enable enhanced hover"
+                },
+                "enhanced": {
+                  "type": "boolean",
+                  "default": true,
+                  "description": "Enable advanced hover features"
+                },
+                "showHierarchy": {
+                  "type": "boolean",
+                  "default": true,
+                  "description": "Show type hierarchy in hover"
+                },
+                "showConstraints": {
+                  "type": "boolean",
+                  "default": true,
+                  "description": "Show constraints in hover"
+                },
+                "showTerminology": {
+                  "type": "boolean",
+                  "default": true,
+                  "description": "Show terminology bindings in hover"
+                }
+              },
+              "additionalProperties": false
+            },
+            "diagnostics": {
+              "type": "object",
+              "description": "Enhanced diagnostic settings",
+              "properties": {
+                "enabled": {
+                  "type": "boolean",
+                  "default": true,
+                  "description": "Enable enhanced diagnostics"
+                },
+                "typeAware": {
+                  "type": "boolean",
+                  "default": true,
+                  "description": "Enable type-aware diagnostics"
+                },
+                "strictMode": {
+                  "type": "boolean",
+                  "default": false,
+                  "description": "Enable strict mode diagnostics"
+                },
+                "enableSuggestions": {
+                  "type": "boolean",
+                  "default": true,
+                  "description": "Enable diagnostic suggestions"
+                },
+                "maxSuggestions": {
+                  "type": "number",
+                  "minimum": 1,
+                  "maximum": 20,
+                  "default": 5,
+                  "description": "Maximum number of suggestions"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "completion": {
+          "type": "object",
+          "description": "Completion provider settings",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": true,
+              "description": "Enable completion provider"
+            },
+            "maxSuggestions": {
+              "type": "number",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50,
+              "description": "Maximum number of completion suggestions"
+            },
+            "includeSnippets": {
+              "type": "boolean",
+              "default": true,
+              "description": "Include code snippets in completions"
+            },
+            "includeDocumentation": {
+              "type": "boolean",
+              "default": true,
+              "description": "Include documentation in completions"
+            },
+            "fuzzyMatching": {
+              "type": "boolean",
+              "default": true,
+              "description": "Enable fuzzy matching for completions"
+            },
+            "sortByRelevance": {
+              "type": "boolean",
+              "default": true,
+              "description": "Sort completions by relevance"
+            }
+          },
+          "additionalProperties": false
+        },
+        "hover": {
+          "type": "object",
+          "description": "Hover provider settings",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": true,
+              "description": "Enable hover provider"
+            },
+            "includeDocumentation": {
+              "type": "boolean",
+              "default": true,
+              "description": "Include documentation in hover"
+            },
+            "includeExamples": {
+              "type": "boolean",
+              "default": false,
+              "description": "Include examples in hover"
+            },
+            "maxContentLength": {
+              "type": "number",
+              "minimum": 100,
+              "maximum": 5000,
+              "default": 1000,
+              "description": "Maximum hover content length"
+            },
+            "showTypeInformation": {
+              "type": "boolean",
+              "default": true,
+              "description": "Show type information in hover"
+            }
+          },
+          "additionalProperties": false
+        },
+        "performance": {
+          "type": "object",
+          "description": "Performance settings",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": true,
+              "description": "Enable performance optimizations"
+            },
+            "requestThrottling": {
+              "type": "object",
+              "description": "Request throttling settings",
+              "properties": {
+                "enabled": {
+                  "type": "boolean",
+                  "default": true,
+                  "description": "Enable request throttling"
+                },
+                "adaptiveEnabled": {
+                  "type": "boolean",
+                  "default": true,
+                  "description": "Enable adaptive throttling"
+                },
+                "defaultWindowMs": {
+                  "type": "number",
+                  "minimum": 100,
+                  "maximum": 10000,
+                  "default": 1000,
+                  "description": "Default throttling window in milliseconds"
+                }
+              },
+              "additionalProperties": false
+            },
+            "caching": {
+              "type": "object",
+              "description": "Performance caching settings",
+              "properties": {
+                "enabled": {
+                  "type": "boolean",
+                  "default": true,
+                  "description": "Enable caching"
+                },
+                "maxCacheSize": {
+                  "type": "number",
+                  "minimum": 10,
+                  "maximum": 10000,
+                  "default": 1000,
+                  "description": "Maximum cache size"
+                },
+                "ttlMs": {
+                  "type": "number",
+                  "minimum": 1000,
+                  "maximum": 3600000,
+                  "default": 300000,
+                  "description": "Cache time-to-live in milliseconds"
+                }
+              },
+              "additionalProperties": false
+            },
+            "timeouts": {
+              "type": "object",
+              "description": "Request timeout settings",
+              "properties": {
+                "completionTimeoutMs": {
+                  "type": "number",
+                  "minimum": 1000,
+                  "maximum": 30000,
+                  "default": 5000,
+                  "description": "Completion request timeout"
+                },
+                "diagnosticTimeoutMs": {
+                  "type": "number",
+                  "minimum": 1000,
+                  "maximum": 60000,
+                  "default": 10000,
+                  "description": "Diagnostic request timeout"
+                },
+                "hoverTimeoutMs": {
+                  "type": "number",
+                  "minimum": 1000,
+                  "maximum": 10000,
+                  "default": 3000,
+                  "description": "Hover request timeout"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
