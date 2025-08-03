@@ -8,6 +8,7 @@ import { TextDocument } from 'vscode-languageserver-textdocument';
 import { FHIRPathService } from '../parser/FHIRPathService';
 import { FHIRResourceService } from '../services/FHIRResourceService';
 import { FHIRPathContextService } from '../services/FHIRPathContextService';
+import { FHIRPathFunctionRegistry } from '../services/FHIRPathFunctionRegistry';
 
 export interface FHIRValidationResult {
   isValid: boolean;
@@ -29,7 +30,8 @@ export class FHIRValidationProvider {
 
   constructor(
     private fhirPathService: FHIRPathService,
-    private fhirResourceService: FHIRResourceService
+    private fhirResourceService: FHIRResourceService,
+    private functionRegistry: FHIRPathFunctionRegistry
   ) {
     this.contextService = new FHIRPathContextService(fhirResourceService);
   }
@@ -427,6 +429,11 @@ export class FHIRValidationProvider {
       return null; // No context to validate against
     }
 
+    // Check if this is a function call - functions should not be validated as properties
+    if (this.isFunctionCall(expression)) {
+      return null;
+    }
+
     // Define valid properties for common FHIR resources
     const resourceProperties: { [key: string]: string[] } = {
       'Patient': [
@@ -465,8 +472,14 @@ export class FHIRValidationProvider {
       // Extract the property after the resource type prefix
       const rootProperty = sameResourceMatch[1];
 
-      // Skip validation for function calls, operators, and literals
-      if (['where', 'exists', 'first', 'last', 'count', 'empty', 'all', 'any', 'select', 'distinct', 'today', 'now'].includes(rootProperty)) {
+      // Skip validation if the property name is the same as the resource type (e.g., Patient.Patient)
+      // This handles cases where someone might reference the resource type itself
+      if (rootProperty === context.resourceType) {
+        return null; // Allow resource type self-reference
+      }
+
+      // Skip validation for function calls
+      if (this.isFunctionName(rootProperty)) {
         return null;
       }
 
@@ -497,8 +510,14 @@ export class FHIRValidationProvider {
 
     const rootProperty = propertyMatches[1];
 
-    // Skip validation for function calls, operators, and literals
-    if (['where', 'exists', 'first', 'last', 'count', 'empty', 'all', 'any', 'select', 'distinct', 'today', 'now'].includes(rootProperty)) {
+    // Skip validation if the property name is the same as the resource type (e.g., just "Patient")
+    // This handles cases where someone references the resource type itself
+    if (rootProperty === context.resourceType) {
+      return null; // Allow resource type reference
+    }
+
+    // Skip validation for function calls
+    if (this.isFunctionName(rootProperty)) {
       return null;
     }
 
@@ -973,5 +992,38 @@ export class FHIRValidationProvider {
       warnings,
       suggestions
     };
+  }
+
+  /**
+   * Check if expression contains a function call (has parentheses)
+   */
+  private isFunctionCall(expression: string): boolean {
+    // Look for function call pattern: word followed by optional whitespace and opening parenthesis
+    return /\b[a-zA-Z][a-zA-Z0-9]*\s*\(/.test(expression);
+  }
+
+  /**
+   * Check if a word is a known FHIRPath function name
+   */
+  private isFunctionName(name: string): boolean {
+    // Get functions from the function registry
+    const functions = this.functionRegistry.getFunctions();
+    const functionNames = functions.map(f => f.name);
+    
+    // Check if it's a known function
+    if (functionNames.includes(name)) {
+      return true;
+    }
+
+    // Common FHIRPath functions that might not be in registry
+    const commonFunctions = [
+      'where', 'exists', 'first', 'last', 'count', 'empty', 'all', 'any', 'select', 'distinct',
+      'today', 'now', 'length', 'substring', 'contains', 'startsWith', 'endsWith', 'matches',
+      'replace', 'split', 'join', 'upper', 'lower', 'toInteger', 'toString', 'toDecimal',
+      'aggregate', 'combine', 'union', 'intersect', 'exclude', 'iif', 'trace', 'repeat',
+      'ofType', 'as', 'is', 'extension', 'hasValue', 'getValue', 'children', 'descendants'
+    ];
+    
+    return commonFunctions.includes(name);
   }
 }

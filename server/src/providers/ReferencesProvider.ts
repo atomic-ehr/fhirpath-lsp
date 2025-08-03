@@ -12,18 +12,50 @@ import {
 } from '../types/SymbolTypes';
 
 import { SymbolService } from '../services/SymbolService';
+import { ModelProviderService } from '../services/ModelProviderService';
+import {
+  EnhancedReference,
+  ReferenceType,
+  UsageType,
+  ReferenceContext,
+  ReferenceResolutionResult,
+  ReferenceFinderConfig,
+  EnhancedReferenceBuilder,
+  ReferenceAnalysisUtils,
+  ChoiceTypeReferenceContext,
+  InheritedReferenceContext,
+  CrossResourceReferenceContext
+} from './EnhancedReferenceTypes';
 
 /**
- * Provider for find references functionality in FHIRPath expressions
+ * Enhanced provider for find references functionality in FHIRPath expressions with FHIR-aware intelligence
  */
 export class ReferencesProvider implements IReferencesProvider {
+  private modelProviderService?: ModelProviderService;
+  private defaultConfig: ReferenceFinderConfig = {
+    includeInherited: true,
+    includeChoiceTypes: true,
+    includeCrossResource: true,
+    includeSemanticMatches: false,
+    maxResults: 100,
+    minConfidence: 0.5,
+    groupResults: true,
+    sortBy: 'relevance'
+  };
+
   constructor(
     private connection: Connection,
-    private symbolService: SymbolService
-  ) {}
+    private symbolService: SymbolService,
+    modelProviderService?: ModelProviderService
+  ) {
+    this.modelProviderService = modelProviderService;
+    if (this.modelProviderService) {
+      this.connection.console.log('ReferencesProvider initialized with ModelProvider integration');
+    }
+  }
 
   /**
-   * Provide references for symbol at the given position
+   * Provide references for symbol at the given position with FHIR-aware enhancement
    */
   async provideReferences(
     document: TextDocument,
@@ -31,8 +63,28 @@ export class ReferencesProvider implements IReferencesProvider {
     context: { includeDeclaration: boolean }
   ): Promise<Location[] | null> {
     try {
-      this.connection.console.log(`Providing references for ${document.uri} at ${JSON.stringify(position)}`);
+      this.connection.console.log(`Providing enhanced references for ${document.uri} at ${JSON.stringify(position)}`);
 
+      // Try enhanced reference finding first if ModelProvider is available
+      if (this.modelProviderService?.isInitialized()) {
+        const enhancedResult = await this.findEnhancedReferences(
+          document,
+          position,
+          { ...this.defaultConfig, groupResults: false }
+        );
+        
+        if (enhancedResult.references.length > 0) {
+          const locations = enhancedResult.references.map(ref => ({
+            uri: ref.uri,
+            range: ref.range
+          }));
+          
+          this.connection.console.log(`Found ${locations.length} enhanced references`);
+          return locations;
+        }
+      }
+
+      // Fallback to basic reference finding
       const symbol = this.symbolService.findSymbolAtPosition(document, position);
       if (!symbol) {
         this.connection.console.log('No symbol found at position');
@@ -41,7 +93,6 @@ export class ReferencesProvider implements IReferencesProvider {
 
       this.connection.console.log(`Found symbol: ${symbol.name} (${symbol.kind})`);
 
-      // Find references in the current document
       const references = this.findReferencesInDocument(
         document,
         symbol,
@@ -53,7 +104,7 @@ export class ReferencesProvider implements IReferencesProvider {
         return null;
       }
 
-      this.connection.console.log(`Found ${references.length} references`);
+      this.connection.console.log(`Found ${references.length} basic references`);
       return references;
 
     } catch (error) {
@@ -291,6 +342,409 @@ export class ReferencesProvider implements IReferencesProvider {
   }
 
   /**
+   * Enhanced reference finding with FHIR-aware intelligence
+   */
+  async findEnhancedReferences(
+    document: TextDocument,
+    position: Position,
+    config: Partial<ReferenceFinderConfig> = {}
+  ): Promise<ReferenceResolutionResult> {
+    const finalConfig = { ...this.defaultConfig, ...config };
+    const result: ReferenceResolutionResult = {
+      references: [],
+      grouped: [],
+      summary: {
+        totalReferences: 0,
+        exactMatches: 0,
+        choiceTypeMatches: 0,
+        inheritedMatches: 0,
+        crossResourceMatches: 0,
+        semanticMatches: 0,
+        resourceTypes: [],
+        mostCommonUsage: UsageType.READ
+      },
+      errors: []
+    };
+
+    try {
+      if (!this.modelProviderService?.isInitialized()) {
+        result.errors.push({
+          message: 'ModelProvider not available for enhanced references',
+          code: 'NO_MODEL_PROVIDER',
+          severity: 'warning'
+        });
+        return result;
+      }
+
+      // Get symbol at position
+      const symbol = this.symbolService.findSymbolAtPosition(document, position);
+      if (!symbol) {
+        result.errors.push({
+          message: 'No symbol found at position',
+          code: 'NO_SYMBOL',
+          severity: 'info'
+        });
+        return result;
+      }
+
+      this.connection.console.log(`Finding enhanced references for: ${symbol.name} (${symbol.kind})`);
+
+      const builder = new EnhancedReferenceBuilder();
+
+      // Find basic property references
+      await this.findPropertyReferences(document, symbol, builder, finalConfig);
+
+      // Find choice type references if enabled
+      if (finalConfig.includeChoiceTypes) {
+        await this.findChoiceTypeReferences(document, symbol, builder, finalConfig);
+      }
+
+      // Find inherited property references if enabled
+      if (finalConfig.includeInherited) {
+        await this.findInheritedReferences(document, symbol, builder, finalConfig);
+      }
+
+      // Find cross-resource references if enabled
+      if (finalConfig.includeCrossResource) {
+        await this.findCrossResourceReferences(document, symbol, builder, finalConfig);
+      }
+
+      result.references = builder.build();
+
+      // Filter by confidence
+      result.references = result.references.filter(ref => ref.confidence >= finalConfig.minConfidence);
+
+      // Sort by relevance
+      this.sortReferences(result.references, finalConfig.sortBy);
+
+      // Limit results
+      if (result.references.length > finalConfig.maxResults) {
+        result.references = result.references.slice(0, finalConfig.maxResults);
+      }
+
+      // Group results if enabled
+      if (finalConfig.groupResults) {
+        result.grouped = ReferenceAnalysisUtils.groupReferences(result.references);
+      }
+
+      // Calculate summary
+      result.summary = this.calculateReferenceSummary(result.references);
+
+      this.connection.console.log(
+        `Enhanced reference finding completed: ${result.references.length} references, ` +
+        `${result.grouped.length} groups, ${result.errors.length} errors`
+      );
+
+      return result;
+
+    } catch (error) {
+      this.connection.console.error(`Error in enhanced reference finding: ${error}`);
+      result.errors.push({
+        message: `Enhanced reference finding error: ${(error as Error).message}`,
+        code: 'ENHANCED_REFERENCE_ERROR',
+        severity: 'error'
+      });
+      return result;
+    }
+  }
+
+  /**
+   * Find property references in the document
+   */
+  private async findPropertyReferences(
+    document: TextDocument,
+    symbol: any,
+    builder: EnhancedReferenceBuilder,
+    config: ReferenceFinderConfig
+  ): Promise<void> {
+    try {
+      const basicReferences = this.findReferencesInDocument(document, symbol, true);
+      
+      for (const location of basicReferences) {
+        const context = this.buildReferenceContext(document, location, symbol);
+        const usage = ReferenceAnalysisUtils.classifyUsageType(
+          symbol.name,
+          context.lineText,
+          context.parentExpression
+        );
+        
+        builder.addPropertyReference(location, symbol.name, context, usage);
+      }
+    } catch (error) {
+      this.connection.console.error(`Error finding property references: ${error}`);
+    }
+  }
+
+  /**
+   * Find choice type references (e.g., value -> valueString, valueQuantity)
+   */
+  private async findChoiceTypeReferences(
+    document: TextDocument,
+    symbol: any,
+    builder: EnhancedReferenceBuilder,
+    config: ReferenceFinderConfig
+  ): Promise<void> {
+    try {
+      if (!this.modelProviderService?.isInitialized()) return;
+
+      // Check if this could be a choice type
+      const isChoiceProperty = this.modelProviderService.isChoiceProperty(symbol.name);
+      const baseProperty = isChoiceProperty ? 
+        this.modelProviderService.extractBaseProperty(symbol.name) : symbol.name;
+
+      // Find all choice type variations
+      const choicePattern = new RegExp(`\\b${baseProperty}[A-Z][a-zA-Z]*\\b`, 'g');
+      const documentText = document.getText();
+      let match;
+      
+      while ((match = choicePattern.exec(documentText)) !== null) {
+        const startPos = document.positionAt(match.index);
+        const endPos = document.positionAt(match.index + match[0].length);
+        const range = Range.create(startPos, endPos);
+        const location: Location = { uri: document.uri, range };
+        
+        const choiceProperty = match[0];
+        const choiceType = this.modelProviderService.extractChoiceType(choiceProperty);
+        
+        if (choiceType) {
+          const resourceType = this.extractResourceTypeFromContext(document, startPos);
+          const choiceContext: ChoiceTypeReferenceContext = {
+            baseProperty,
+            choiceProperty,
+            availableChoices: [], // Would be populated from ModelProvider
+            resourceType: resourceType || 'Unknown',
+            propertyPath: [choiceProperty]
+          };
+          
+          const usage = ReferenceAnalysisUtils.classifyUsageType(
+            choiceProperty,
+            this.getLineText(document, range)
+          );
+          
+          builder.addChoiceTypeReference(location, choiceContext, usage);
+        }
+      }
+    } catch (error) {
+      this.connection.console.error(`Error finding choice type references: ${error}`);
+    }
+  }
+
+  /**
+   * Find inherited property references (e.g., id from Resource)
+   */
+  private async findInheritedReferences(
+    document: TextDocument,
+    symbol: any,
+    builder: EnhancedReferenceBuilder,
+    config: ReferenceFinderConfig
+  ): Promise<void> {
+    try {
+      if (!this.modelProviderService?.isInitialized()) return;
+
+      // Check common inherited properties
+      const inheritedProperties = ['id', 'meta', 'extension', 'text', 'language'];
+      if (!inheritedProperties.includes(symbol.name)) return;
+
+      // Find all references to this inherited property across different resource types
+      const pattern = new RegExp(`\\b\\w+\\.${symbol.name}\\b`, 'g');
+      const documentText = document.getText();
+      let match;
+      
+      while ((match = pattern.exec(documentText)) !== null) {
+        const startPos = document.positionAt(match.index);
+        const endPos = document.positionAt(match.index + match[0].length);
+        const range = Range.create(startPos, endPos);
+        const location: Location = { uri: document.uri, range };
+        
+        const fullExpression = match[0];
+        const resourceType = fullExpression.split('.')[0];
+        
+        const inheritedContext: InheritedReferenceContext = {
+          property: symbol.name,
+          inheritedFrom: 'Resource', // Could be more specific with ModelProvider
+          resourceType,
+          inheritanceChain: ['Element', 'Resource'] // Simplified
+        };
+        
+        const usage = ReferenceAnalysisUtils.classifyUsageType(
+          symbol.name,
+          this.getLineText(document, range)
+        );
+        
+        builder.addInheritedReference(location, inheritedContext, usage);
+      }
+    } catch (error) {
+      this.connection.console.error(`Error finding inherited references: ${error}`);
+    }
+  }
+
+  /**
+   * Find cross-resource references (similar properties across different resources)
+   */
+  private async findCrossResourceReferences(
+    document: TextDocument,
+    symbol: any,
+    builder: EnhancedReferenceBuilder,
+    config: ReferenceFinderConfig
+  ): Promise<void> {
+    try {
+      // Find properties with same name across different resource types
+      const commonProperties = ['status', 'active', 'name', 'code', 'category'];
+      if (!commonProperties.includes(symbol.name)) return;
+
+      const pattern = new RegExp(`\\b\\w+\\.${symbol.name}\\b`, 'g');
+      const documentText = document.getText();
+      let match;
+      
+      while ((match = pattern.exec(documentText)) !== null) {
+        const startPos = document.positionAt(match.index);
+        const endPos = document.positionAt(match.index + match[0].length);
+        const range = Range.create(startPos, endPos);
+        const location: Location = { uri: document.uri, range };
+        
+        const fullExpression = match[0];
+        const resourceType = fullExpression.split('.')[0];
+        
+        const crossResourceContext: CrossResourceReferenceContext = {
+          property: symbol.name,
+          sourceResourceType: 'Unknown', // Would extract from symbol context
+          targetResourceTypes: [resourceType],
+          semanticRelationship: 'same'
+        };
+        
+        const usage = ReferenceAnalysisUtils.classifyUsageType(
+          symbol.name,
+          this.getLineText(document, range)
+        );
+        
+        builder.addCrossResourceReference(location, crossResourceContext, usage, 0.8);
+      }
+    } catch (error) {
+      this.connection.console.error(`Error finding cross-resource references: ${error}`);
+    }
+  }
+
+  /**
+   * Build reference context for a location
+   */
+  private buildReferenceContext(document: TextDocument, location: Location, symbol: any): ReferenceContext {
+    const lineText = this.getLineText(document, location.range);
+    const resourceType = this.extractResourceTypeFromContext(document, location.range.start) || 'Unknown';
+    
+    return {
+      resourceType,
+      propertyPath: [symbol.name],
+      expressionType: ReferenceAnalysisUtils.getExpressionType(lineText),
+      lineText,
+      surroundingContext: this.getContextForLocation(document, location.range)
+    };
+  }
+
+  /**
+   * Extract resource type from expression context
+   */
+  private extractResourceTypeFromContext(document: TextDocument, position: Position): string | undefined {
+    try {
+      const lineText = document.getText(Range.create(
+        Position.create(position.line, 0),
+        Position.create(position.line + 1, 0)
+      ));
+      
+      // Look for patterns like "Patient.name" or "Observation.value"
+      const match = lineText.match(/\b([A-Z][a-zA-Z]+)\./); 
+      return match ? match[1] : undefined;
+    } catch (error) {
+      return undefined;
+    }
+  }
+
+  /**
+   * Get line text for a range
+   */
+  private getLineText(document: TextDocument, range: Range): string {
+    try {
+      const lineRange = Range.create(
+        Position.create(range.start.line, 0),
+        Position.create(range.start.line + 1, 0)
+      );
+      return document.getText(lineRange).trim();
+    } catch (error) {
+      return '';
+    }
+  }
+
+  /**
+   * Sort references by specified criteria
+   */
+  private sortReferences(references: EnhancedReference[], sortBy: 'relevance' | 'location' | 'usage'): void {
+    switch (sortBy) {
+      case 'relevance':
+        references.sort((a, b) => b.confidence - a.confidence);
+        break;
+      case 'location':
+        references.sort((a, b) => {
+          if (a.uri !== b.uri) return a.uri.localeCompare(b.uri);
+          if (a.range.start.line !== b.range.start.line) {
+            return a.range.start.line - b.range.start.line;
+          }
+          return a.range.start.character - b.range.start.character;
+        });
+        break;
+      case 'usage':
+        references.sort((a, b) => a.usage.localeCompare(b.usage));
+        break;
+    }
+  }
+
+  /**
+   * Calculate summary statistics for references
+   */
+  private calculateReferenceSummary(references: EnhancedReference[]) {
+    const summary = {
+      totalReferences: references.length,
+      exactMatches: 0,
+      choiceTypeMatches: 0,
+      inheritedMatches: 0,
+      crossResourceMatches: 0,
+      semanticMatches: 0,
+      resourceTypes: [] as string[],
+      mostCommonUsage: UsageType.READ
+    };
+
+    const usageCounts = new Map<UsageType, number>();
+    const resourceTypeSet = new Set<string>();
+
+    for (const ref of references) {
+      // Count by type
+      if (ref.metadata?.isExact) summary.exactMatches++;
+      if (ref.metadata?.isChoiceType) summary.choiceTypeMatches++;
+      if (ref.metadata?.isInherited) summary.inheritedMatches++;
+      if (ref.type === ReferenceType.CROSS_RESOURCE_USAGE) summary.crossResourceMatches++;
+      if (ref.metadata?.semanticSimilarity !== undefined) summary.semanticMatches++;
+
+      // Track usage patterns
+      const currentCount = usageCounts.get(ref.usage) || 0;
+      usageCounts.set(ref.usage, currentCount + 1);
+
+      // Track resource types
+      resourceTypeSet.add(ref.context.resourceType);
+    }
+
+    summary.resourceTypes = Array.from(resourceTypeSet);
+
+    // Find most common usage
+    let maxCount = 0;
+    for (const [usage, count] of usageCounts) {
+      if (count > maxCount) {
+        maxCount = count;
+        summary.mostCommonUsage = usage;
+      }
+    }
+
+    return summary;
+  }
+
+  /**
    * Get reference statistics for a symbol
    */
   getReferenceStats(document: TextDocument, symbolName: string): {
@@ -332,5 +786,13 @@ export class ReferencesProvider implements IReferencesProvider {
     }
 
     return stats;
+  }
+
+  /**
+   * Set ModelProvider for enhanced functionality
+   */
+  setModelProvider(modelProviderService: ModelProviderService): void {
+    this.modelProviderService = modelProviderService;
+    this.connection.console.log('ModelProvider set for ReferencesProvider');
   }
 }

@@ -5,11 +5,28 @@ import {
 } from '../schemas/BaseConfig';
 import { AppConfig } from '../ConfigManager';
 
+// Export for backward compatibility
+export type ValidationResult<T = any> = ConfigValidationResult;
+export { ConfigValidationResult };
+
+/**
+ * Validation context for enhanced validation
+ */
+export interface ValidationContext {
+  strictMode?: boolean;
+  allowUnknownProperties?: boolean;
+  environment?: 'development' | 'production' | 'test';
+  [key: string]: any;
+}
+
+// Export alias for backward compatibility
+export { BaseConfigValidator as ConfigValidator };
+
 /**
  * Base configuration validator interface
  */
-export interface IConfigValidator {
-  validate(config: Partial<AppConfig>): ConfigValidationResult;
+export interface IConfigValidator<T = AppConfig> {
+  validate(config: Partial<T>): ConfigValidationResult;
   validatePath(path: string, value: any): ConfigValidationResult;
   getName(): string;
   getVersion(): string;

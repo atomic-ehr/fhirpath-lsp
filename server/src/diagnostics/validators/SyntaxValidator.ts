@@ -2,15 +2,21 @@ import { Diagnostic, DiagnosticSeverity, Range, Position } from 'vscode-language
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { BaseValidator } from './BaseValidator';
 import { DiagnosticBuilder, DiagnosticCode } from '../DiagnosticBuilder';
+import { FHIRPathService } from '../../parser/FHIRPathService';
 
 /**
  * Validates syntax patterns in FHIRPath expressions
  * Handles string issues, bracket mismatches, and operator problems
+ * Leverages detailed parser diagnostics for enhanced error reporting
  */
 export class SyntaxValidator extends BaseValidator {
 
+  constructor(private fhirPathService?: FHIRPathService) {
+    super();
+  }
+
   /**
-   * Validates syntax patterns that might not be caught by the parser
+   * Validates syntax patterns leveraging detailed parser diagnostics
    */
   validate(
     document: TextDocument,
@@ -26,6 +32,13 @@ export class SyntaxValidator extends BaseValidator {
     const diagnostics: Diagnostic[] = [];
 
     try {
+      // First, try to get detailed diagnostics from the parser
+      if (this.fhirPathService) {
+        const parserDiagnostics = this.getParserDiagnostics(text, lineOffset, columnOffset);
+        diagnostics.push(...parserDiagnostics);
+      }
+
+      // Then perform additional syntax validation
       // Check for unterminated strings
       const stringIssues = this.findStringIssues(text);
       for (const issue of stringIssues) {
@@ -340,6 +353,189 @@ export class SyntaxValidator extends BaseValidator {
       });
     }
 
+    return issues;
+  }
+
+  /**
+   * Get detailed diagnostics from the FHIRPath parser
+   */
+  private getParserDiagnostics(
+    expression: string,
+    lineOffset: number,
+    columnOffset: number
+  ): Diagnostic[] {
+    const diagnostics: Diagnostic[] = [];
+
+    try {
+      const parseResult = this.fhirPathService!.parse(expression);
+      
+      if (!parseResult.success && parseResult.errors) {
+        for (const error of parseResult.errors) {
+          const diagnostic = this.createEnhancedParseErrorDiagnostic(
+            error,
+            expression,
+            lineOffset,
+            columnOffset
+          );
+          diagnostics.push(diagnostic);
+        }
+      }
+
+    } catch (error) {
+      // If parser fails completely, create a general error
+      diagnostics.push({
+        severity: DiagnosticSeverity.Error,
+        range: {
+          start: { line: lineOffset, character: columnOffset },
+          end: { line: lineOffset, character: columnOffset + expression.length }
+        },
+        message: `Parser error: ${error instanceof Error ? error.message : String(error)}`,
+        source: 'fhirpath-parser',
+        code: 'parser-failure'
+      });
+    }
+
+    return diagnostics;
+  }
+
+  /**
+   * Create enhanced diagnostic from parser error with better context
+   */
+  private createEnhancedParseErrorDiagnostic(
+    error: any,
+    expression: string,
+    lineOffset: number,
+    columnOffset: number
+  ): Diagnostic {
+    let range: Range;
+    
+    // Use error position if available
+    if (error.line !== undefined && error.column !== undefined) {
+      const startLine = lineOffset + error.line;
+      const startChar = (error.line === 0 ? columnOffset : 0) + error.column;
+      const endChar = startChar + (error.length || 1);
+      
+      range = {
+        start: { line: startLine, character: startChar },
+        end: { line: startLine, character: endChar }
+      };
+    } else if (error.offset !== undefined) {
+      // Convert offset to line/column
+      const position = this.offsetToPosition(expression, error.offset);
+      const startLine = lineOffset + position.line;
+      const startChar = (position.line === 0 ? columnOffset : 0) + position.character;
+      const endChar = startChar + (error.length || 1);
+      
+      range = {
+        start: { line: startLine, character: startChar },
+        end: { line: startLine, character: endChar }
+      };
+    } else {
+      // Fallback to entire expression
+      range = {
+        start: { line: lineOffset, character: columnOffset },
+        end: { line: lineOffset, character: columnOffset + expression.length }
+      };
+    }
+
+    // Enhanced error message with context
+    let message = error.message || 'Parse error';
+    
+    // Add suggestions for common errors
+    const suggestions = this.getSuggestionsForParseError(error, expression);
+    if (suggestions.length > 0) {
+      message += `. Suggestions: ${suggestions.join(', ')}`;
+    }
+
+    return {
+      severity: DiagnosticSeverity.Error,
+      range,
+      message,
+      source: 'fhirpath-parser-enhanced',
+      code: error.code || 'parse-error'
+    };
+  }
+
+  /**
+   * Convert text offset to line/column position
+   */
+  private offsetToPosition(text: string, offset: number): { line: number; character: number } {
+    const lines = text.substring(0, offset).split('\n');
+    return {
+      line: lines.length - 1,
+      character: lines[lines.length - 1].length
+    };
+  }
+
+  /**
+   * Get suggestions for common parse errors
+   */
+  private getSuggestionsForParseError(error: any, expression: string): string[] {
+    const suggestions: string[] = [];
+    const errorMsg = (error.message || '').toLowerCase();
+    
+    // Common error patterns and suggestions
+    if (errorMsg.includes('expected')) {
+      if (errorMsg.includes("')'")) {
+        suggestions.push('check for missing closing parenthesis');
+      }
+      if (errorMsg.includes("']'")) {
+        suggestions.push('check for missing closing bracket');
+      }
+      if (errorMsg.includes('operator')) {
+        suggestions.push('check operator syntax (e.g., = instead of ==)');
+      }
+    }
+    
+    if (errorMsg.includes('unexpected')) {
+      if (errorMsg.includes('token')) {
+        suggestions.push('check for typos in function or operator names');
+      }
+    }
+    
+    if (errorMsg.includes('unterminated')) {
+      suggestions.push('check for missing closing quote');
+    }
+    
+    // Context-specific suggestions
+    if (expression.includes('==')) {
+      suggestions.push('use = instead of == for equality comparison');
+    }
+    
+    if (expression.includes('&&') || expression.includes('||')) {
+      suggestions.push('use "and" and "or" instead of && and ||');
+    }
+    
+    if (expression.includes('!=')) {
+      suggestions.push('FHIRPath uses != for not equals (this is correct)');
+    }
+
+    return suggestions;
+  }
+
+  /**
+   * Enhanced string issue detection with parser integration
+   */
+  private findEnhancedStringIssues(
+    expression: string,
+    parseErrors: any[]
+  ): Array<{start: number, end: number, message: string}> {
+    const issues = this.findStringIssues(expression);
+    
+    // Enhance with parser error context
+    for (const error of parseErrors) {
+      if (error.message && error.message.includes('string')) {
+        const start = error.offset || 0;
+        const end = start + (error.length || 1);
+        
+        issues.push({
+          start,
+          end,
+          message: `Parser: ${error.message}`
+        });
+      }
+    }
+    
     return issues;
   }
 }

@@ -1,26 +1,21 @@
 import {
   parse,
-  compile,
-  analyze
+  analyze,
+  FHIRModelProvider
 } from '@atomic-ehr/fhirpath';
 import type {
-  FHIRPathExpression,
   AnalysisResult,
   ASTNode,
-  Position,
   ParseResult as FHIRPathParseResult,
-  ParseDiagnostic,
-  TextRange,
-  EvaluationContext,
-  CompileOptions,
-  AnalyzeOptions,
-  CompiledExpression
+  Diagnostic as FHIRPathDiagnostic,
+  ModelTypeProvider,
+  TypeInfo,
+  FHIRModelProviderConfig
 } from '@atomic-ehr/fhirpath';
 
 // Types for parser integration
 export interface ParseResult {
   success: boolean;
-  expression?: FHIRPathExpression;
   ast?: ASTNode;
   errors: ParseError[];
 }
@@ -45,44 +40,38 @@ export interface Token {
   column: number;
 }
 
-/**
- * Simple FHIRPathExpression implementation for LSP use
- */
-class SimpleFHIRPathExpression implements FHIRPathExpression {
-  constructor(public readonly ast: ASTNode, private source: string) {}
-  
-  evaluate(input?: any, context?: EvaluationContext): any[] {
-    // For LSP, we don't need evaluation - delegate to main API
-    throw new Error('Evaluation not supported in LSP mode');
-  }
-  
-  compile(options?: CompileOptions): CompiledExpression {
-    return compile(this.source, options);
-  }
-  
-  analyze(options?: AnalyzeOptions): AnalysisResult {
-    return analyze(this.source, options);
-  }
-  
-  toString(): string {
-    return this.source;
-  }
-}
+// Simple wrapper for LSP integration
+// No longer implementing FHIRPathExpression interface as it doesn't exist in new API
 
 /**
  * Service for integrating with @atomic-ehr/fhirpath parser
  * Provides abstraction layer for LSP integration
  */
+interface CacheEntry<T> {
+  value: T;
+  timestamp: number;
+  accessCount: number;
+}
+
 export class FHIRPathService {
-  private parseCache = new Map<string, ParseResult>();
-  private analysisCache = new Map<string, AnalysisResult>();
+  private parseCache = new Map<string, CacheEntry<ParseResult>>();
+  private analysisCache = new Map<string, CacheEntry<AnalysisResult>>();
+  private modelProvider?: ModelTypeProvider;
+  private isModelProviderInitialized = false;
+  private initializationPromise?: Promise<void>;
+  
+  // Performance optimization settings
+  private readonly maxCacheSize = 1000;
+  private readonly cacheExpiryMs = 30 * 60 * 1000; // 30 minutes
+  private readonly backgroundProcessingEnabled = true;
+  private backgroundTasks: Promise<void>[] = [];
 
   /**
    * Parse FHIRPath expression and extract tokens for syntax highlighting
    */
   parse(expression: string): ParseResult {
     // Check cache first
-    const cached = this.parseCache.get(expression);
+    const cached = this.getCachedResult(this.parseCache, expression);
     if (cached) {
       return cached;
     }
@@ -92,8 +81,8 @@ export class FHIRPathService {
       const parseResult = parse(expression);
 
       // Check if parse has errors
-      if (parseResult.hasErrors) {
-        const errors = parseResult.diagnostics.map(diag => this.convertDiagnosticToError(diag, expression));
+      if (parseResult.errors.length > 0) {
+        const errors = parseResult.errors.map(error => this.convertParseErrorToError(error, expression));
         const result: ParseResult = {
           success: false,
           errors
@@ -106,13 +95,12 @@ export class FHIRPathService {
       // Create successful result
       const result: ParseResult = {
         success: true,
-        expression: new SimpleFHIRPathExpression(parseResult.ast, expression),
         ast: parseResult.ast,
         errors: []
       };
 
       // Cache successful parse
-      this.parseCache.set(expression, result);
+      this.setCachedResult(this.parseCache, expression, result);
       return result;
 
     } catch (error: any) {
@@ -128,20 +116,84 @@ export class FHIRPathService {
   }
 
   /**
+   * Initialize FHIR model provider for enhanced type checking
+   */
+  async initializeModelProvider(config?: FHIRModelProviderConfig): Promise<void> {
+    if (this.isModelProviderInitialized) {
+      return;
+    }
+
+    // If initialization is already in progress, wait for it
+    if (this.initializationPromise) {
+      return this.initializationPromise;
+    }
+
+    this.initializationPromise = this.performInitialization(config);
+    return this.initializationPromise;
+  }
+
+  /**
+   * Perform the actual model provider initialization
+   */
+  private async performInitialization(config?: FHIRModelProviderConfig): Promise<void> {
+    try {
+      const path = require('path');
+      const workspaceRoot = process.cwd();
+      const cacheDir = path.join(workspaceRoot, '.fhirpath-lsp');
+      
+      const defaultConfig: FHIRModelProviderConfig = {
+        packages: [
+          { name: 'hl7.fhir.r4.core', version: '4.0.1' }
+        ],
+        cacheDir: cacheDir
+      };
+
+      const provider  = new FHIRModelProvider(config || defaultConfig)
+      await provider.initialize();
+      
+      this.isModelProviderInitialized = true;
+      
+      // Clear analysis cache since we now have enhanced type information
+      this.analysisCache.clear();
+      this.modelProvider =  provider;
+
+    } catch (error) {
+      console.warn('Failed to initialize FHIR model provider:', error);
+      // Continue without model provider - basic analysis will still work
+    }
+  }
+
+  /**
    * Analyze expression for type information and semantic validation
    */
-  analyze(expression: string | FHIRPathExpression): AnalysisResult | null {
+  analyze(expression: string, options?: {
+    variables?: Record<string, unknown>;
+    inputType?: TypeInfo;
+    errorRecovery?: boolean;
+  }): AnalysisResult | null {
     try {
-      const key = typeof expression === 'string' ? expression : expression.toString();
-
-      // Check cache
-      const cached = this.analysisCache.get(key);
+      // Check cache key including options
+      const cacheKey = `${expression}:${JSON.stringify(options || {})}`;
+      const cached = this.getCachedResult(this.analysisCache, cacheKey);
       if (cached) {
         return cached;
       }
 
-      const result = analyze(expression);
-      this.analysisCache.set(key, result);
+      const analysisOptions = {
+        variables: options?.variables,
+        modelProvider: this.modelProvider,
+        inputType: options?.inputType,
+        errorRecovery: options?.errorRecovery || true
+      };
+
+      const result = analyze(expression, analysisOptions);
+      this.setCachedResult(this.analysisCache, cacheKey, result);
+      
+      // Optionally trigger background processing for common expressions
+      if (this.backgroundProcessingEnabled) {
+        this.scheduleBackgroundAnalysis(expression, options);
+      }
+      
       return result;
 
     } catch (error) {
@@ -151,32 +203,419 @@ export class FHIRPathService {
   }
 
   /**
-   * Compile expression for performance (used in evaluation)
+   * Advanced analysis with context-aware type checking
    */
-  compile(expression: string | FHIRPathExpression) {
+  analyzeWithContext(
+    expression: string, 
+    resourceType?: string,
+    variables?: Record<string, unknown>
+  ): AnalysisResult | null {
     try {
-      return compile(expression);
+      let inputType: TypeInfo | undefined;
+      
+      // Create input type info for the resource context
+      if (resourceType && this.modelProvider && this.isModelProviderInitialized) {
+        try {
+          inputType = this.modelProvider.getType(resourceType);
+        } catch (error) {
+          console.warn(`Failed to get type for ${resourceType}:`, error);
+        }
+      }
+
+      return this.analyze(expression, {
+        variables,
+        inputType,
+        errorRecovery: true
+      });
+
     } catch (error) {
-      console.error('Compilation error:', error);
+      console.error('Context-aware analysis error:', error);
       return null;
     }
   }
 
   /**
-   * Convert ParseDiagnostic to ParseError for LSP compatibility
+   * Get type information for an expression
    */
-  private convertDiagnosticToError(diagnostic: ParseDiagnostic, expression: string): ParseError {
-    const range = diagnostic.range;
+  getExpressionType(expression: string, resourceType?: string): TypeInfo | null {
+    try {
+      const analysis = this.analyzeWithContext(expression, resourceType);
+      
+      if (analysis && analysis.ast) {
+        // The AST should have type information attached by the analyzer
+        return (analysis.ast as any).typeInfo || null;
+      }
+      
+      return null;
+    } catch (error) {
+      console.error('Type inference error:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Validate expression against expected type
+   */
+  validateExpressionType(
+    expression: string, 
+    expectedType: string,
+    resourceType?: string
+  ): { isValid: boolean; actualType?: string; diagnostics: FHIRPathDiagnostic[] } {
+    try {
+      const analysis = this.analyzeWithContext(expression, resourceType);
+      
+      if (!analysis) {
+        return {
+          isValid: false,
+          diagnostics: [{
+            range: { start: { line: 0, character: 0 }, end: { line: 0, character: expression.length } },
+            severity: 1,
+            message: 'Failed to analyze expression',
+            source: 'fhirpath-type-check'
+          }]
+        };
+      }
+
+      const actualType = this.getExpressionType(expression, resourceType);
+      const isValid = actualType ? this.isTypeCompatible(actualType, expectedType) : false;
+
+      return {
+        isValid,
+        actualType: actualType?.type || 'unknown',
+        diagnostics: analysis.diagnostics || []
+      };
+
+    } catch (error) {
+      return {
+        isValid: false,
+        diagnostics: [{
+          range: { start: { line: 0, character: 0 }, end: { line: 0, character: expression.length } },
+          severity: 1,
+          message: `Type validation error: ${error instanceof Error ? error.message : String(error)}`,
+          source: 'fhirpath-type-check'
+        }]
+      };
+    }
+  }
+
+  /**
+   * Check if actual type is compatible with expected type
+   */
+  private isTypeCompatible(actualType: TypeInfo, expectedType: string): boolean {
+    // Basic type compatibility check
+    if (actualType.type === expectedType) {
+      return true;
+    }
+
+    // Handle some common type compatibility rules
+    const compatibilityRules: Record<string, string[]> = {
+      'Any': ['String', 'Integer', 'Decimal', 'Boolean', 'Date', 'DateTime', 'Time'],
+      'Decimal': ['Integer'],
+      'String': [],
+      'Boolean': [],
+      'Date': ['DateTime'],
+      'DateTime': ['Date']
+    };
+
+    const compatibleTypes = compatibilityRules[expectedType];
+    return compatibleTypes ? compatibleTypes.includes(actualType.type) : false;
+  }
+
+  /**
+   * Get the initialized model provider instance
+   */
+  getModelProvider(): ModelTypeProvider | undefined {
+    return this.isModelProviderInitialized ? this.modelProvider : undefined;
+  }
+
+  /**
+   * Get available resource types from model provider
+   */
+  getAvailableResourceTypes(): string[] {
+    if (!this.modelProvider || !this.isModelProviderInitialized) {
+      return [];
+    }
+
+    try {
+      // Get all resource types from the model provider
+      if ('getResourceTypes' in this.modelProvider && typeof this.modelProvider.getResourceTypes === 'function') {
+        const resourceTypes = this.modelProvider.getResourceTypes();
+        return resourceTypes || [];
+      }
+      return [];
+    } catch (error) {
+      console.error('Failed to get resource types from model provider:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Get properties available for a resource type
+   */
+  getResourceProperties(resourceType: string): string[] {
+    if (!this.modelProvider || !this.isModelProviderInitialized) {
+      return [];
+    }
+
+    try {
+      const typeInfo = this.modelProvider.getType(resourceType);
+      if (typeInfo) {
+        return this.modelProvider.getElementNames(typeInfo);
+      }
+    } catch (error) {
+      console.warn(`Failed to get properties for ${resourceType}:`, error);
+    }
+
+    return [];
+  }
+
+  /**
+   * Get detailed property information for a resource type
+   */
+  getResourcePropertyDetails(resourceType: string): Array<{
+    name: string;
+    type: string;
+    description?: string;
+    cardinality?: string;
+  }> {
+    if (!this.modelProvider || !this.isModelProviderInitialized) {
+      return [];
+    }
+
+    try {
+      const typeInfo = this.modelProvider.getType(resourceType);
+      if (typeInfo) {
+        const elementNames = this.modelProvider.getElementNames(typeInfo);
+        return elementNames.map(name => {
+          try {
+            const elementType = this.modelProvider!.getElementType(typeInfo, name);
+            return {
+              name,
+              type: elementType?.type || 'unknown',
+              description: (elementType as any)?.description,
+              cardinality: (elementType as any)?.cardinality
+            };
+          } catch (error) {
+            console.warn(`Failed to get element details for ${resourceType}.${name}:`, error);
+            return {
+              name,
+              type: 'unknown'
+            };
+          }
+        });
+      }
+    } catch (error) {
+      console.warn(`Failed to get property details for ${resourceType}:`, error);
+    }
+
+    return [];
+  }
+
+  /**
+   * Enhanced cache management with TTL and LRU eviction
+   */
+  private getCachedResult<T>(cache: Map<string, CacheEntry<T>>, key: string): T | null {
+    const entry = cache.get(key);
+    if (!entry) {
+      return null;
+    }
+
+    // Check if expired
+    const now = Date.now();
+    if (now - entry.timestamp > this.cacheExpiryMs) {
+      cache.delete(key);
+      return null;
+    }
+
+    // Update access count and timestamp for LRU
+    entry.accessCount++;
+    entry.timestamp = now;
+
+    return entry.value;
+  }
+
+  private setCachedResult<T>(cache: Map<string, CacheEntry<T>>, key: string, value: T): void {
+    const now = Date.now();
+
+    // If cache is full, evict least recently used entries
+    if (cache.size >= this.maxCacheSize) {
+      this.evictLRUEntries(cache);
+    }
+
+    cache.set(key, {
+      value,
+      timestamp: now,
+      accessCount: 1
+    });
+  }
+
+  private evictLRUEntries<T>(cache: Map<string, CacheEntry<T>>): void {
+    // Remove 20% of entries to avoid frequent evictions
+    const targetSize = Math.floor(this.maxCacheSize * 0.8);
+    const entriesToRemove = cache.size - targetSize;
+
+    if (entriesToRemove <= 0) return;
+
+    // Sort by access count and timestamp (oldest first)
+    const entries = Array.from(cache.entries()).sort((a, b) => {
+      const [, entryA] = a;
+      const [, entryB] = b;
+      
+      if (entryA.accessCount !== entryB.accessCount) {
+        return entryA.accessCount - entryB.accessCount;
+      }
+      return entryA.timestamp - entryB.timestamp;
+    });
+
+    // Remove the least used entries
+    for (let i = 0; i < entriesToRemove; i++) {
+      cache.delete(entries[i][0]);
+    }
+  }
+
+  /**
+   * Background processing for performance optimization
+   */
+  private scheduleBackgroundAnalysis(
+    expression: string, 
+    options?: { variables?: Record<string, unknown>; inputType?: TypeInfo; errorRecovery?: boolean; }
+  ): void {
+    // Only process common patterns in background
+    if (!this.isCommonPattern(expression)) {
+      return;
+    }
+
+    const task = this.performBackgroundAnalysis(expression, options);
+    this.backgroundTasks.push(task);
+
+    // Cleanup completed tasks
+    this.backgroundTasks = this.backgroundTasks.filter(task => {
+      // Check if task is still pending
+      return task.constructor.name === 'Promise';
+    });
+  }
+
+  private async performBackgroundAnalysis(
+    expression: string, 
+    options?: { variables?: Record<string, unknown>; inputType?: TypeInfo; errorRecovery?: boolean; }
+  ): Promise<void> {
+    try {
+      await new Promise(resolve => setTimeout(resolve, 100)); // Small delay to not block main thread
+      
+      // Pre-compute analysis for related expressions
+      const variations = this.generateExpressionVariations(expression);
+      
+      for (const variation of variations) {
+        const cacheKey = `${variation}:${JSON.stringify(options || {})}`;
+        if (!this.analysisCache.has(cacheKey)) {
+          try {
+            const result = analyze(variation, {
+              variables: options?.variables,
+              modelProvider: this.modelProvider,
+              inputType: options?.inputType,
+              errorRecovery: true
+            });
+            this.setCachedResult(this.analysisCache, cacheKey, result);
+          } catch (error) {
+            // Ignore errors in background processing
+          }
+        }
+      }
+    } catch (error) {
+      // Background tasks shouldn't fail the main process
+      console.warn('Background analysis failed:', error);
+    }
+  }
+
+  private isCommonPattern(expression: string): boolean {
+    // Common patterns that benefit from pre-computation
+    const commonPatterns = [
+      /^[A-Za-z]+\.[A-Za-z]+$/, // Simple navigation like Patient.name
+      /^[A-Za-z]+\.[A-Za-z]+\.[A-Za-z]+$/, // Deeper navigation like Patient.name.family
+      /\.where\(/, // where() function usage
+      /\.exists\(\)/, // exists() function usage
+      /\.first\(\)/, // first() function usage
+      /\.select\(/ // select() function usage
+    ];
+
+    return commonPatterns.some(pattern => pattern.test(expression));
+  }
+
+  private generateExpressionVariations(expression: string): string[] {
+    const variations: string[] = [];
+    
+    // Add common variations for pre-computation
+    if (expression.endsWith('.exists()')) {
+      const base = expression.replace('.exists()', '');
+      variations.push(
+        `${base}.empty()`,
+        `${base}.count()`,
+        `${base}.first()`
+      );
+    }
+    
+    if (expression.includes('.where(')) {
+      const base = expression.split('.where(')[0];
+      variations.push(
+        `${base}.count()`,
+        `${base}.exists()`,
+        `${base}.first()`
+      );
+    }
+
+    return variations.slice(0, 3); // Limit variations to avoid cache bloat
+  }
+
+  /**
+   * Performance monitoring and cache statistics
+   */
+  getCacheStatistics(): {
+    parseCache: { size: number; maxSize: number };
+    analysisCache: { size: number; maxSize: number };
+    backgroundTasks: number;
+  } {
+    return {
+      parseCache: {
+        size: this.parseCache.size,
+        maxSize: this.maxCacheSize
+      },
+      analysisCache: {
+        size: this.analysisCache.size,
+        maxSize: this.maxCacheSize
+      },
+      backgroundTasks: this.backgroundTasks.length
+    };
+  }
+
+  /**
+   * Clear all caches (useful for testing or memory pressure)
+   */
+  clearCaches(): void {
+    this.parseCache.clear();
+    this.analysisCache.clear();
+  }
+
+  /**
+   * Convert parse error to ParseError for LSP compatibility
+   */
+  private convertParseErrorToError(error: any, expression: string): ParseError {
+    // Handle fhirpath ParseError structure
+    const position = error.position || { line: 0, character: 0 };
+    const range = error.range || { 
+      start: position, 
+      end: { line: position.line, character: position.character + 1 }
+    };
+    
     const startOffset = this.lineColumnToOffset(expression, range.start.line, range.start.character);
     const endOffset = this.lineColumnToOffset(expression, range.end.line, range.end.character);
     
     return {
-      message: diagnostic.message,
+      message: error.message || 'Parse error',
       line: range.start.line,
       column: range.start.character,
       offset: startOffset,
-      length: endOffset - startOffset,
-      code: diagnostic.code || 'fhirpath-parse-error'
+      length: Math.max(1, endOffset - startOffset),
+      code: 'fhirpath-parse-error'
     };
   }
 
@@ -242,6 +681,23 @@ export class FHIRPathService {
       line: lines.length - 1,
       column: lines[lines.length - 1].length
     };
+  }
+
+
+  /**
+   * Check if a resource type is valid according to the model provider
+   */
+  isValidResourceType(resourceType: string): boolean {
+    if (!this.modelProvider || !this.isModelProviderInitialized) {
+      return false;
+    }
+
+    try {
+      const typeInfo = this.modelProvider.getType(resourceType);
+      return typeInfo !== null && typeInfo !== undefined;
+    } catch (error) {
+      return false;
+    }
   }
 
 

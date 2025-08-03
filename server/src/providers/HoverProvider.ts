@@ -11,6 +11,8 @@ import { FHIRPathService } from '../parser/FHIRPathService';
 import { FHIRPathFunctionRegistry, FHIRPathFunction, FHIRPathOperator } from '../services/FHIRPathFunctionRegistry';
 import { FHIRPathContextService } from '../services/FHIRPathContextService';
 import { cacheService } from '../services/CacheService';
+import type { TypeInfo } from '@atomic-ehr/fhirpath';
+import { ModelProviderService, EnhancedTypeInfo, TerminologyBinding } from '../services/ModelProviderService';
 
 export interface HoverContext {
   text: string;
@@ -22,12 +24,35 @@ export interface HoverContext {
   parentExpression?: string;
 }
 
+export interface EnhancedHoverContent {
+  title: string;
+  type: string;
+  hierarchy?: string[];
+  cardinality?: string;
+  required?: boolean;
+  choiceTypes?: string[];
+  terminology?: TerminologyBinding;
+  inheritance?: string;
+  description?: string;
+  examples?: string[];
+}
+
+export interface ExpressionContext {
+  isValid: boolean;
+  resourceType: string;
+  propertyPath: string[];
+  fullPath?: string;
+}
+
 export class HoverProvider {
   private functionRegistry: FHIRPathFunctionRegistry;
+  private hoverCache = new Map<string, { content: MarkupContent; timestamp: number }>();
+  private readonly cacheExpiryMs = 600000; // 10 minutes
 
   constructor(
     private fhirPathService: FHIRPathService,
-    private fhirPathContextService?: FHIRPathContextService
+    private fhirPathContextService?: FHIRPathContextService,
+    private modelProviderService?: ModelProviderService
   ) {
     this.functionRegistry = new FHIRPathFunctionRegistry();
   }
@@ -158,6 +183,17 @@ export class HoverProvider {
   }
 
   private async getHoverContentForContext(context: HoverContext, document: TextDocument): Promise<MarkupContent | null> {
+    // Try enhanced hover first if ModelProviderService is available
+    if (this.modelProviderService) {
+      const fullExpression = this.extractFullExpression(context, document);
+      if (fullExpression) {
+        const enhancedHover = await this.createEnhancedTypeHover(fullExpression, context.position, document);
+        if (enhancedHover) {
+          return enhancedHover;
+        }
+      }
+    }
+
     // Check if it's a function
     const func = this.functionRegistry.getFunction(context.word);
     if (func) {
@@ -185,8 +221,20 @@ export class HoverProvider {
     if (context.isAfterDot && context.parentExpression) {
       const resourceType = this.extractResourceType(context.parentExpression);
       if (resourceType) {
+        // Check if it's a choice type property
+        if (this.isChoiceProperty(context.word)) {
+          const baseProperty = this.extractBasePropertyFromChoice(context.word);
+          const typeInfo = { name: resourceType } as TypeInfo;
+          return this.createChoiceTypeHover(baseProperty, context.word, typeInfo);
+        }
         return this.createFHIRPropertyHover(context.word, resourceType);
       }
+    }
+
+    // Try to get type information for the expression
+    const typeHover = await this.createTypeInferenceHover(context, document);
+    if (typeHover) {
+      return typeHover;
     }
 
     // Check if it's a general FHIR property
@@ -195,6 +243,21 @@ export class HoverProvider {
     }
 
     return null;
+  }
+
+  /**
+   * Check if a property name is a choice type expansion
+   */
+  private isChoiceProperty(propertyName: string): boolean {
+    return /^[a-z]+[A-Z]\w+$/.test(propertyName);
+  }
+
+  /**
+   * Extract base property name from choice property
+   */
+  private extractBasePropertyFromChoice(choiceProperty: string): string {
+    const match = choiceProperty.match(/^([a-z]+)[A-Z]/);
+    return match ? match[1] : choiceProperty;
   }
 
 
@@ -383,16 +446,17 @@ export class HoverProvider {
   }
 
   private createFHIRResourceHover(resourceType: string): MarkupContent {
-    const resourceInfo = this.getFHIRResourceInfo(resourceType);
+    // Get resource information from model provider
+    const properties = this.fhirPathService.getResourcePropertyDetails(resourceType);
     
     let content = `### 🔷 ${resourceType}\\n`;
-    content += `<sub>**FHIR Resource** • ${resourceInfo.version || 'R4'} • ${resourceInfo.maturity || 'Normative'}</sub>\\n\\n`;
-    content += `<sub>${resourceInfo.description}</sub>\\n\\n`;
+    content += `<sub>**FHIR Resource** • R4 • Normative</sub>\\n\\n`;
+    content += `<sub>FHIR ${resourceType} resource type. Access properties using dot notation.</sub>\\n\\n`;
     
-    if (resourceInfo.commonProperties.length > 0) {
+    if (properties && properties.length > 0) {
       // Show only top 3-4 most important properties in collapsed format
-      const keyProps = resourceInfo.commonProperties.slice(0, 4);
-      content += `<details>\\n<summary><sub>📝 <strong>Key Properties</strong> (${resourceInfo.commonProperties.length} total)</sub></summary>\\n\\n`;
+      const keyProps = properties.slice(0, 4);
+      content += `<details>\\n<summary><sub>📝 <strong>Key Properties</strong> (${properties.length} total)</sub></summary>\\n\\n`;
       
       keyProps.forEach((prop: any) => {
         if (!prop) return; // Skip if prop is undefined
@@ -402,17 +466,17 @@ export class HoverProvider {
         content += `<sub>• **\`${prop.name || 'unknown'}\`** ${badge}${reqBadge} — ${this.truncateText(description, 60)}</sub>\\n`;
       });
       
-      if (resourceInfo.commonProperties.length > 4) {
-        content += `<sub>• <em>...and ${resourceInfo.commonProperties.length - 4} more</em></sub>\\n`;
+      if (properties.length > 4) {
+        content += `<sub>• <em>...and ${properties.length - 4} more</em></sub>\\n`;
       }
       content += `\\n</details>\\n\\n`;
     }
 
-    // Compact examples in collapsible section
-    if (resourceInfo.examples && resourceInfo.examples.length > 0) {
+    // Add common examples
+    const examples = this.getResourceExamples(resourceType);
+    if (examples.length > 0) {
       content += `<details>\\n<summary><sub>💡 <strong>FHIRPath Examples</strong></sub></summary>\\n\\n`;
-      const topExamples = resourceInfo.examples.slice(0, 3);
-      topExamples.forEach((example: string) => {
+      examples.forEach((example: string) => {
         content += `<sub>\`${example}\`</sub>\\n`;
       });
       content += `\\n</details>\\n\\n`;
@@ -424,6 +488,31 @@ export class HoverProvider {
       kind: MarkupKind.Markdown,
       value: content
     };
+  }
+
+  /**
+   * Get common FHIRPath examples for a resource type
+   */
+  private getResourceExamples(resourceType: string): string[] {
+    const exampleMap: Record<string, string[]> = {
+      'Patient': [
+        'Patient.name.family',
+        'Patient.birthDate < today()',
+        'Patient.identifier.where(system = "MRN")'
+      ],
+      'Observation': [
+        'Observation.status = "final"',
+        'Observation.value as Quantity',
+        'Observation.code.coding.exists()'
+      ],
+      'Condition': [
+        'Condition.clinicalStatus.coding.code',
+        'Condition.onset as dateTime',
+        'Condition.severity.exists()'
+      ]
+    };
+    
+    return exampleMap[resourceType] || [];
   }
 
   private createFHIRPropertyHover(propertyName: string, resourceType: string): MarkupContent {
@@ -485,14 +574,8 @@ export class HoverProvider {
   }
 
   private isFHIRResourceType(name: string): boolean {
-    const fhirResourceTypes = [
-      'Patient', 'Observation', 'Condition', 'Procedure', 'MedicationRequest',
-      'DiagnosticReport', 'Encounter', 'Organization', 'Practitioner', 'Location',
-      'Device', 'Medication', 'Substance', 'AllergyIntolerance', 'Immunization',
-      'Bundle', 'Composition', 'DocumentReference', 'Binary', 'HealthcareService',
-      'Endpoint', 'Schedule', 'Slot', 'Appointment', 'AppointmentResponse'
-    ];
-    return fhirResourceTypes.includes(name);
+    // Use model provider instead of hardcoded list
+    return this.fhirPathService.isValidResourceType(name);
   }
 
   private extractResourceType(expression: string): string | null {
@@ -618,170 +701,522 @@ export class HoverProvider {
     return text.substring(0, maxLength - 3) + '...';
   }
 
-  private getFHIRResourceInfo(resourceType: string): any {
-    const resourceInfoMap: Record<string, any> = {
-      Patient: {
-        description: 'Demographics and other administrative information about an individual or animal receiving care or other health-related services.',
-        version: 'R4',
-        maturity: 'Normative',
-        examples: [
-          'Patient.name.family',
-          'Patient.active = true',
-          'Patient.birthDate < today()',
-          'Patient.telecom.where(system = "phone").value'
-        ],
-        commonProperties: [
-          { name: 'id', type: 'id', required: true, cardinality: '0..1', description: 'Logical id of this artifact' },
-          { name: 'active', type: 'boolean', required: false, cardinality: '0..1', description: 'Whether this patient record is in active use' },
-          { name: 'name', type: 'HumanName[]', required: false, cardinality: '0..*', description: 'A name associated with the patient' },
-          { name: 'telecom', type: 'ContactPoint[]', required: false, cardinality: '0..*', description: 'A contact detail for the patient' },
-          { name: 'gender', type: 'code', required: false, cardinality: '0..1', description: 'Administrative gender (male | female | other | unknown)' },
-          { name: 'birthDate', type: 'date', required: false, cardinality: '0..1', description: 'The date of birth for the patient' },
-          { name: 'address', type: 'Address[]', required: false, cardinality: '0..*', description: 'An address for the patient' },
-          { name: 'identifier', type: 'Identifier[]', required: false, cardinality: '0..*', description: 'An identifier for this patient' }
-        ]
-      },
-      Observation: {
-        description: 'Measurements and simple assertions made about a patient, device or other subject.',
-        version: 'R4',
-        maturity: 'Normative',
-        examples: [
-          'Observation.status = "final"',
-          'Observation.value.as(Quantity).value',
-          'Observation.code.coding.code',
-          'Observation.component.where(code.coding.code = "8480-6").value'
-        ],
-        commonProperties: [
-          { name: 'id', type: 'id', required: true, cardinality: '0..1', description: 'Logical id of this artifact' },
-          { name: 'status', type: 'code', required: true, cardinality: '1..1', description: 'Status of the observation (registered | preliminary | final | amended +)' },
-          { name: 'category', type: 'CodeableConcept[]', required: false, cardinality: '0..*', description: 'Classification of type of observation' },
-          { name: 'code', type: 'CodeableConcept', required: true, cardinality: '1..1', description: 'Type of observation (code / type)' },
-          { name: 'subject', type: 'Reference', required: false, cardinality: '0..1', description: 'Who and/or what the observation is about' },
-          { name: 'value[x]', type: 'Element', required: false, cardinality: '0..1', description: 'Actual result (Quantity, CodeableConcept, string, etc.)' },
-          { name: 'component', type: 'BackboneElement[]', required: false, cardinality: '0..*', description: 'Component observations' }
-        ]
-      },
-      Condition: {
-        description: 'A clinical condition, problem, diagnosis, or other event, situation, issue, or clinical concept that has risen to a level of concern.',
-        version: 'R4',
-        maturity: 'Normative',
-        examples: [
-          'Condition.code.coding.code',
-          'Condition.clinicalStatus = "active"',
-          'Condition.subject.reference',
-          'Condition.onset.as(dateTime)'
-        ],
-        commonProperties: [
-          { name: 'id', type: 'id', required: true, cardinality: '0..1', description: 'Logical id of this artifact' },
-          { name: 'clinicalStatus', type: 'CodeableConcept', required: false, cardinality: '0..1', description: 'active | recurrence | relapse | inactive | remission | resolved' },
-          { name: 'verificationStatus', type: 'CodeableConcept', required: false, cardinality: '0..1', description: 'unconfirmed | provisional | differential | confirmed | refuted' },
-          { name: 'code', type: 'CodeableConcept', required: false, cardinality: '0..1', description: 'Identification of the condition, problem or diagnosis' },
-          { name: 'subject', type: 'Reference', required: true, cardinality: '1..1', description: 'Who has the condition?' },
-          { name: 'onset[x]', type: 'Element', required: false, cardinality: '0..1', description: 'Estimated or actual date or date-time the condition began' }
-        ]
-      }
-    };
 
-    return resourceInfoMap[resourceType] || {
-      description: `FHIR ${resourceType} resource.`,
-      commonProperties: [
-        { name: 'id', type: 'id', description: 'Logical id of this artifact' },
-        { name: 'meta', type: 'Meta', description: 'Metadata about the resource' }
-      ]
+
+  /**
+   * Create hover with type inference information
+   */
+  private async createTypeInferenceHover(
+    context: HoverContext,
+    document: TextDocument
+  ): Promise<MarkupContent | null> {
+    try {
+      // Extract the full expression up to the cursor
+      const fullExpression = this.extractFullExpression(context, document);
+      if (!fullExpression) {
+        return null;
+      }
+
+      // Try to infer the resource type from context
+      const resourceType = this.inferResourceType(fullExpression);
+      
+      // Get type information for the expression
+      const typeInfo = this.fhirPathService.getExpressionType(fullExpression, resourceType);
+      
+      if (typeInfo && typeInfo.type) {
+        return this.createTypeInfoHover(fullExpression, typeInfo, resourceType);
+      }
+
+      // If no specific type info, try to analyze the expression
+      const analysis = this.fhirPathService.analyzeWithContext(fullExpression, resourceType);
+      if (analysis && analysis.ast) {
+        return this.createAnalysisHover(fullExpression, analysis, resourceType);
+      }
+
+    } catch (error) {
+      console.warn('Type inference hover failed:', error);
+    }
+
+    return null;
+  }
+
+  /**
+   * Extract full expression for type analysis
+   */
+  private extractFullExpression(context: HoverContext, document: TextDocument): string | null {
+    const line = document.getText({
+      start: { line: context.position.line, character: 0 },
+      end: { line: context.position.line + 1, character: 0 }
+    });
+
+    // Find the start of the expression (simple heuristic)
+    let start = 0;
+    const beforeCursor = line.substring(0, context.position.character);
+    
+    // Look for common expression boundaries
+    const boundaries = [';', '\n', '(', ')', '{', '}', '[', ']'];
+    for (let i = beforeCursor.length - 1; i >= 0; i--) {
+      if (boundaries.includes(beforeCursor[i])) {
+        start = i + 1;
+        break;
+      }
+    }
+
+    // Extract from start to cursor position
+    const expression = line.substring(start, context.position.character + context.word.length).trim();
+    
+    return expression.length > 0 ? expression : null;
+  }
+
+  /**
+   * Infer resource type from expression context
+   */
+  private inferResourceType(expression: string): string | undefined {
+    // Look for resource type at the beginning of the expression
+    const resourceMatch = expression.match(/^\s*([A-Z][a-zA-Z]+)\b/);
+    if (resourceMatch && this.isFHIRResourceType(resourceMatch[1])) {
+      return resourceMatch[1];
+    }
+
+    // Check for common patterns
+    const patterns = [
+      /Patient\./,
+      /Observation\./,
+      /Condition\./,
+      /Procedure\./,
+      /MedicationRequest\./,
+      /DiagnosticReport\./
+    ];
+
+    for (const pattern of patterns) {
+      const match = expression.match(pattern);
+      if (match) {
+        return match[0].replace('.', '');
+      }
+    }
+
+    return undefined;
+  }
+
+  /**
+   * Create hover content with type information
+   */
+  private createTypeInfoHover(
+    expression: string,
+    typeInfo: TypeInfo,
+    resourceType?: string
+  ): MarkupContent {
+    const typeStr = String(typeInfo.type);
+    const cardinality = typeInfo.singleton ? '' : '[]';
+    const contextStr = resourceType ? ` (in ${resourceType} context)` : '';
+    
+    let content = `### 🔍 Expression Analysis\n\n`;
+    content += `**Expression:** \`${expression}\`\n\n`;
+    content += `**Type:** \`${typeStr}${cardinality}\`${contextStr}\n\n`;
+    
+    // Add description if available
+    if ((typeInfo as any).description) {
+      content += `**Description:** ${(typeInfo as any).description}\n\n`;
+    }
+
+    // Add cardinality information
+    if (typeInfo.singleton) {
+      content += `**Cardinality:** Single value (0..1)\n\n`;
+    } else {
+      content += `**Cardinality:** Collection (0..*)\n\n`;
+    }
+
+    // Add type-specific suggestions
+    const suggestions = this.getTypeSuggestions(typeStr, typeInfo.singleton ?? false);
+    if (suggestions.length > 0) {
+      content += `**💡 Suggestions:**\n`;
+      suggestions.forEach(suggestion => {
+        content += `• ${suggestion}\n`;
+      });
+      content += `\n`;
+    }
+
+    return {
+      kind: MarkupKind.Markdown,
+      value: content
     };
   }
 
-  private getFHIRPropertyInfo(propertyName: string, resourceType: string): any {
-    const propertyInfoMap: Record<string, Record<string, any>> = {
-      Patient: {
-        active: {
-          description: 'Whether this patient record is in active use. A record is marked as inactive when it should no longer be used.',
-          type: 'boolean',
-          cardinality: '0..1',
-          required: false,
-          examples: ['Patient.active', 'Patient.active = true', 'Patient.where(active = false)'],
-          constraints: ['When absent, no inference can be made about whether the patient record is active or not']
-        },
-        name: {
-          description: 'A name associated with the patient. Multiple names may be recorded with different purposes.',
-          type: 'HumanName[]',
-          cardinality: '0..*',
-          required: false,
-          examples: ['Patient.name', 'Patient.name.family', 'Patient.name.where(use = "official").family'],
-          constraints: ['A patient may have multiple names with different uses or applicable periods']
-        },
-        birthDate: {
-          description: 'The date of birth for the patient. At least an estimated year should be provided as a guess.',
-          type: 'date',
-          cardinality: '0..1',
-          required: false,
-          examples: ['Patient.birthDate', 'Patient.birthDate > @1980-01-01', 'Patient.birthDate < today()'],
-          constraints: ['If a date is partial, e.g. just year or year + month, this SHALL be valid date']
-        },
-        gender: {
-          description: 'Administrative gender - the gender that the patient is considered to have for administration.',
-          type: 'code',
-          cardinality: '0..1',
-          required: false,
-          examples: ['Patient.gender', 'Patient.gender = "female"'],
-          binding: {
-            strength: 'required',
-            name: 'AdministrativeGender',
-            valueSet: 'http://hl7.org/fhir/ValueSet/administrative-gender'
-          }
-        }
-      },
-      Observation: {
-        status: {
-          description: 'The status of the result value. This is typically used to indicate whether the result is preliminary, final, amended, etc.',
-          type: 'code',
-          cardinality: '1..1',
-          required: true,
-          examples: ['Observation.status', 'Observation.status = "final"', 'Observation.where(status = "preliminary")'],
-          binding: {
-            strength: 'required',
-            name: 'ObservationStatus',
-            valueSet: 'http://hl7.org/fhir/ValueSet/observation-status'
-          },
-          constraints: ['registered | preliminary | final | amended | corrected | cancelled | entered-in-error | unknown']
-        },
-        value: {
-          description: 'The information determined as a result of making the observation, if the information has a simple value.',
-          type: 'Element',
-          cardinality: '0..1',
-          required: false,
-          examples: ['Observation.value', 'Observation.value.as(Quantity)', 'Observation.value.as(string)'],
-          constraints: ['Must have either a value or component observations (but not both)', 'valueQuantity, valueCodeableConcept, valueString, etc.']
-        },
-        code: {
-          description: 'Describes what was observed. Sometimes this is called the observation "name".',
-          type: 'CodeableConcept',
-          cardinality: '1..1',
-          required: true,
-          examples: ['Observation.code', 'Observation.code.coding.code', 'Observation.code.text'],
-          binding: {
-            strength: 'example',
-            name: 'LOINCCodes',
-            valueSet: 'http://hl7.org/fhir/ValueSet/observation-codes'
-          },
-          constraints: ['Should use LOINC codes where possible']
-        }
-      }
-    };
-
-    const resourceProps = propertyInfoMap[resourceType];
-    if (resourceProps && resourceProps[propertyName]) {
-      return resourceProps[propertyName];
+  /**
+   * Create hover content from analysis result
+   */
+  private createAnalysisHover(
+    expression: string,
+    analysis: any,
+    resourceType?: string
+  ): MarkupContent {
+    let content = `### 🔍 Expression Analysis\n\n`;
+    content += `**Expression:** \`${expression}\`\n\n`;
+    
+    if (resourceType) {
+      content += `**Context:** ${resourceType}\n\n`;
     }
 
-    // Default property info
+    // Add AST information if available
+    if (analysis.ast) {
+      const nodeType = analysis.ast.type || 'Expression';
+      content += `**AST Node:** ${nodeType}\n\n`;
+    }
+
+    // Add any warnings or suggestions
+    if (analysis.diagnostics && analysis.diagnostics.length > 0) {
+      const warnings = analysis.diagnostics.filter((d: any) => d.severity === 2);
+      if (warnings.length > 0) {
+        content += `**⚠️ Warnings:**\n`;
+        warnings.forEach((warning: any) => {
+          content += `• ${warning.message}\n`;
+        });
+        content += `\n`;
+      }
+    }
+
     return {
-      description: `${resourceType} property: ${propertyName}`,
-      type: 'Element',
-      cardinality: '0..*',
-      required: false,
-      examples: [`${resourceType}.${propertyName}`],
-      constraints: []
+      kind: MarkupKind.Markdown,
+      value: content
     };
+  }
+
+  /**
+   * Get type-specific suggestions
+   */
+  private getTypeSuggestions(type: string, isSingleton: boolean): string[] {
+    const suggestions: string[] = [];
+
+    switch (type.toLowerCase()) {
+      case 'boolean':
+        suggestions.push('Can be used directly in conditions (no need for = true)');
+        break;
+      case 'integer':
+      case 'decimal':
+        suggestions.push('Can be compared with numeric operators (>, <, =, etc.)');
+        if (!isSingleton) {
+          suggestions.push('Consider using .sum() or .count() for collections');
+        }
+        break;
+      case 'string':
+        suggestions.push('Use string functions: contains(), startsWith(), endsWith()');
+        if (!isSingleton) {
+          suggestions.push('Consider using .join() to combine multiple strings');
+        }
+        break;
+      case 'date':
+      case 'datetime':
+        suggestions.push('Compare with date literals: @2023-01-01 or today()');
+        break;
+    }
+
+    if (!isSingleton && type !== 'unknown') {
+      suggestions.push('Collection - consider .first(), .last(), or .single() to get single value');
+      suggestions.push('Use .exists() to check if collection has any items');
+      suggestions.push('Use .count() to get number of items');
+    }
+
+    return suggestions;
+  }
+
+  /**
+   * Get cached hover content
+   */
+  private getCachedHover(expression: string): MarkupContent | undefined {
+    const cached = this.hoverCache.get(expression);
+    if (cached && Date.now() - cached.timestamp < this.cacheExpiryMs) {
+      return cached.content;
+    }
+    return undefined;
+  }
+
+  /**
+   * Cache hover content
+   */
+  private cacheHoverContent(expression: string, content: MarkupContent): void {
+    this.hoverCache.set(expression, {
+      content,
+      timestamp: Date.now()
+    });
+
+    // Prevent cache from growing too large
+    if (this.hoverCache.size > 100) {
+      const oldestEntries = Array.from(this.hoverCache.entries())
+        .sort(([, a], [, b]) => a.timestamp - b.timestamp)
+        .slice(0, 20);
+      
+      for (const [key] of oldestEntries) {
+        this.hoverCache.delete(key);
+      }
+    }
+  }
+
+  /**
+   * Create enhanced type hover with ModelProviderService
+   */
+  private async createEnhancedTypeHover(
+    expression: string,
+    position: Position,
+    document: TextDocument
+  ): Promise<MarkupContent | undefined> {
+    if (!this.modelProviderService) {
+      return undefined;
+    }
+
+    // Check cache first
+    const cached = this.getCachedHover(expression);
+    if (cached) {
+      return cached;
+    }
+
+    const context = this.analyzeExpressionContext(expression, position);
+    if (!context.isValid) {
+      return undefined;
+    }
+
+    const navigation = await this.modelProviderService.navigatePropertyPath(
+      context.resourceType,
+      context.propertyPath
+    );
+
+    if (!navigation.isValid || !navigation.finalType) {
+      return undefined;
+    }
+
+    const enhanced = await this.modelProviderService.getEnhancedTypeInfo(
+      navigation.finalType.name
+    );
+
+    const content = this.formatEnhancedHover(context, navigation.finalType, enhanced);
+    
+    // Cache the result
+    this.cacheHoverContent(expression, content);
+    
+    return content;
+  }
+
+  /**
+   * Analyze expression context for navigation
+   */
+  private analyzeExpressionContext(expression: string, position: Position): ExpressionContext {
+    const match = expression.match(/^([A-Z]\w+)(?:\.(\w+(?:\.\w+)*))?$/);
+    if (!match) {
+      return { isValid: false, resourceType: '', propertyPath: [] };
+    }
+
+    const resourceType = match[1];
+    const propertyPath = match[2] ? match[2].split('.') : [];
+    const fullPath = propertyPath.length > 0 
+      ? `${resourceType}.${propertyPath.join('.')}`
+      : resourceType;
+
+    return {
+      isValid: true,
+      resourceType,
+      propertyPath,
+      fullPath
+    };
+  }
+
+  /**
+   * Format enhanced hover content with collapsible sections
+   */
+  private formatEnhancedHover(
+    context: ExpressionContext,
+    typeInfo: TypeInfo,
+    enhanced?: EnhancedTypeInfo
+  ): MarkupContent {
+    const fullPath = context.fullPath || context.resourceType;
+    
+    let content = `### 🔷 ${fullPath}\n`;
+    content += `<sub>**Type:** ${typeInfo.name}</sub>\n\n`;
+    
+    // Add type hierarchy
+    if (enhanced?.hierarchy && enhanced.hierarchy.length > 1) {
+      const hierarchy = enhanced.hierarchy.map(t => t.type.name).join(' → ');
+      content += `<details>\n<summary><sub>📊 **Type Hierarchy**</sub></summary>\n\n`;
+      content += `<sub>${hierarchy}</sub>\n\n</details>\n\n`;
+    }
+    
+    // Add constraints
+    if (enhanced?.constraints) {
+      content += `<details>\n<summary><sub>⚖️ **Constraints**</sub></summary>\n\n`;
+      content += `<sub>**Cardinality:** ${enhanced.constraints.cardinality}</sub>\n`;
+      if (enhanced.constraints.required) {
+        content += `<sub>⚠️ **Required Property**</sub>\n`;
+      }
+      if (enhanced.constraints.minLength !== undefined) {
+        content += `<sub>**Min Length:** ${enhanced.constraints.minLength}</sub>\n`;
+      }
+      if (enhanced.constraints.maxLength !== undefined) {
+        content += `<sub>**Max Length:** ${enhanced.constraints.maxLength}</sub>\n`;
+      }
+      content += `\n</details>\n\n`;
+    }
+    
+    // Add choice types
+    if (enhanced?.choiceTypes && enhanced.choiceTypes.length > 1) {
+      content += `<details>\n<summary><sub>🔀 **Choice Types** (${enhanced.choiceTypes.length} options)</sub></summary>\n\n`;
+      enhanced.choiceTypes.forEach(choice => {
+        const choiceName = this.formatChoicePropertyName(context.propertyPath, choice.type.name);
+        content += `<sub>• **${choiceName}** (${choice.type.name})</sub>\n`;
+      });
+      content += `\n</details>\n\n`;
+    }
+    
+    // Add terminology binding
+    if (enhanced?.terminology) {
+      content += `<details>\n<summary><sub>📚 **Terminology Binding**</sub></summary>\n\n`;
+      content += `<sub>**Strength:** ${enhanced.terminology.strength}</sub>\n`;
+      if (enhanced.terminology.valueSet) {
+        content += `<sub>**ValueSet:** [${enhanced.terminology.valueSet}](${enhanced.terminology.valueSet})</sub>\n`;
+      }
+      if (enhanced.terminology.description) {
+        content += `<sub>**Description:** ${enhanced.terminology.description}</sub>\n`;
+      }
+      content += `\n</details>\n\n`;
+    }
+    
+    // Add inheritance information
+    if (context.propertyPath.length > 0 && enhanced?.hierarchy) {
+      const propertySource = this.findPropertySource(context.propertyPath, enhanced.hierarchy);
+      if (propertySource) {
+        content += `<sub>🧬 **Inherited from:** ${propertySource}</sub>\n\n`;
+      }
+    }
+    
+    // Add FHIR specification link
+    content += `<sub>📖 [FHIR Specification](https://hl7.org/fhir/R4/${typeInfo.name.toLowerCase()}.html)</sub>`;
+    
+    return {
+      kind: MarkupKind.Markdown,
+      value: content
+    };
+  }
+
+  /**
+   * Format choice property name
+   */
+  private formatChoicePropertyName(propertyPath: string[], typeName: string): string {
+    if (propertyPath.length === 0) {
+      return typeName;
+    }
+    
+    const lastProperty = propertyPath[propertyPath.length - 1];
+    if (lastProperty.endsWith('[x]')) {
+      const baseProperty = lastProperty.slice(0, -3);
+      return baseProperty + typeName.charAt(0).toUpperCase() + typeName.slice(1);
+    }
+    
+    return lastProperty + typeName;
+  }
+
+  /**
+   * Find property source in type hierarchy
+   */
+  private findPropertySource(propertyPath: string[], hierarchy: TypeInfo[]): string | undefined {
+    const targetProperty = propertyPath[propertyPath.length - 1];
+    
+    // Search hierarchy from most specific to most general
+    for (let i = hierarchy.length - 1; i >= 0; i--) {
+      const typeInHierarchy = hierarchy[i];
+      // We would need ModelProvider method access here to check properties
+      // For now, return undefined
+    }
+    
+    return undefined;
+  }
+
+  /**
+   * Create choice type hover with enhanced information
+   */
+  private async createChoiceTypeHover(
+    baseProperty: string,
+    choiceProperty: string,
+    typeInfo: TypeInfo
+  ): Promise<MarkupContent> {
+    const choiceType = this.extractChoiceType(choiceProperty);
+    const baseType = typeInfo.name;
+    
+    let content = `### 🔀 ${choiceProperty}\n`;
+    content += `<sub>**Choice Type:** ${choiceType} (from ${baseProperty}[x])</sub>\n\n`;
+    
+    // Show all available choice types if ModelProviderService is available
+    if (this.modelProviderService) {
+      const choiceTypes = await this.modelProviderService.resolveChoiceTypes(typeInfo);
+      if (choiceTypes.length > 1) {
+        content += `<details>\n<summary><sub>**Other Available Choices**</sub></summary>\n\n`;
+        choiceTypes.forEach(choice => {
+          if (choice.type.name !== choiceType) {
+            const altProperty = this.formatChoicePropertyName([baseProperty], choice.type.name);
+            content += `<sub>• **${altProperty}** (${choice.type.name})</sub>\n`;
+          }
+        });
+        content += `\n</details>\n\n`;
+      }
+    }
+    
+    // Add type-specific information
+    content += this.addTypeSpecificInfo(choiceType);
+    
+    return {
+      kind: MarkupKind.Markdown,
+      value: content
+    };
+  }
+
+  /**
+   * Extract choice type from property name
+   */
+  private extractChoiceType(propertyName: string): string {
+    // Extract type from patterns like "valueQuantity" -> "Quantity"
+    const match = propertyName.match(/^[a-z]+([A-Z]\w+)$/);
+    if (match) {
+      return match[1];
+    }
+    return 'unknown';
+  }
+
+  /**
+   * Add type-specific information for common FHIR types
+   */
+  private addTypeSpecificInfo(typeName: string): string {
+    let content = '';
+    
+    switch (typeName) {
+      case 'Quantity':
+        content += `<details>\n<summary><sub>📏 **Quantity Properties**</sub></summary>\n\n`;
+        content += `<sub>• **value** (decimal) - Numerical value</sub>\n`;
+        content += `<sub>• **unit** (string) - Unit representation</sub>\n`;
+        content += `<sub>• **system** (uri) - System of the unit (e.g., UCUM)</sub>\n`;
+        content += `<sub>• **code** (code) - Coded unit form</sub>\n`;
+        content += `\n</details>\n\n`;
+        break;
+        
+      case 'CodeableConcept':
+        content += `<details>\n<summary><sub>🏷️ **CodeableConcept Properties**</sub></summary>\n\n`;
+        content += `<sub>• **coding** (Coding[]) - Code defined by terminology system</sub>\n`;
+        content += `<sub>• **text** (string) - Plain text representation</sub>\n`;
+        content += `\n</details>\n\n`;
+        break;
+        
+      case 'Reference':
+        content += `<details>\n<summary><sub>🔗 **Reference Properties**</sub></summary>\n\n`;
+        content += `<sub>• **reference** (string) - Literal reference (e.g., "Patient/123")</sub>\n`;
+        content += `<sub>• **type** (uri) - Type the reference refers to</sub>\n`;
+        content += `<sub>• **identifier** (Identifier) - Logical reference</sub>\n`;
+        content += `<sub>• **display** (string) - Text alternative</sub>\n`;
+        content += `\n</details>\n\n`;
+        break;
+        
+      case 'Period':
+        content += `<details>\n<summary><sub>📅 **Period Properties**</sub></summary>\n\n`;
+        content += `<sub>• **start** (dateTime) - Starting time</sub>\n`;
+        content += `<sub>• **end** (dateTime) - End time (if ended)</sub>\n`;
+        content += `\n</details>\n\n`;
+        break;
+    }
+    
+    return content;
   }
 }

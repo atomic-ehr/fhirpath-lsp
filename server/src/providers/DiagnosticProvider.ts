@@ -21,6 +21,9 @@ import {
 import { DirectiveValidator } from '../diagnostics/validators/DirectiveValidator';
 import { FunctionValidator } from '../diagnostics/validators/FunctionValidator';
 import { SemanticValidator } from '../diagnostics/validators/SemanticValidator';
+import { TypeAwareValidator } from '../diagnostics/validators/TypeAwareValidator';
+import { TypeAwareDiagnosticValidator } from '../diagnostics/validators/TypeAwareDiagnosticValidator';
+import { ModelProviderService } from '../services/ModelProviderService';
 import { ErrorConverter } from '../diagnostics/converters/ErrorConverter';
 import { DiagnosticMapper } from '../diagnostics/converters/DiagnosticMapper';
 
@@ -64,6 +67,8 @@ export class DiagnosticProvider {
   private directiveValidator: DirectiveValidator;
   private functionValidator: FunctionValidator;
   private semanticValidator: SemanticValidator;
+  private typeAwareValidator: TypeAwareValidator;
+  private typeAwareDiagnosticValidator: TypeAwareDiagnosticValidator;
   private errorConverter: ErrorConverter;
   private diagnosticMapper: DiagnosticMapper;
 
@@ -71,7 +76,8 @@ export class DiagnosticProvider {
     private fhirPathService: FHIRPathService,
     private fhirPathContextService: FHIRPathContextService,
     private fhirValidationProvider?: FHIRValidationProvider,
-    enhancedConfig?: Partial<EnhancedDiagnosticConfig>
+    enhancedConfig?: Partial<EnhancedDiagnosticConfig>,
+    private modelProviderService?: ModelProviderService
   ) {
     this.functionRegistry = new FHIRPathFunctionRegistry();
 
@@ -89,7 +95,15 @@ export class DiagnosticProvider {
     // Initialize modular validators and converters
     this.directiveValidator = new DirectiveValidator();
     this.functionValidator = new FunctionValidator(this.functionRegistry);
-    this.semanticValidator = new SemanticValidator(this.fhirPathService, this.fhirPathContextService);
+    this.semanticValidator = new SemanticValidator(this.fhirPathService);
+    this.typeAwareValidator = new TypeAwareValidator(
+      this.fhirPathService,
+      this.modelProviderService
+    );
+    this.typeAwareDiagnosticValidator = new TypeAwareDiagnosticValidator(
+      this.fhirPathService,
+      this.modelProviderService!
+    );
     this.diagnosticMapper = new DiagnosticMapper(this.functionRegistry);
     this.errorConverter = new ErrorConverter(this.diagnosticMapper);
 
@@ -101,12 +115,12 @@ export class DiagnosticProvider {
   /**
    * Run enhanced diagnostics on an expression
    */
-  private runEnhancedDiagnostics(
+  private async runEnhancedDiagnostics(
     expression: string,
     line: number,
     document: TextDocument,
     resourceType?: string
-  ): EnhancedDiagnostic[] {
+  ): Promise<EnhancedDiagnostic[]> {
     try {
       const context: DiagnosticContext = {
         expression,
@@ -126,6 +140,21 @@ export class DiagnosticProvider {
       diagnostics.push(...this.performanceAnalyzer.analyze(expression, context));
       diagnostics.push(...this.codeQualityAnalyzer.analyze(expression, context));
       diagnostics.push(...this.fhirBestPracticesAnalyzer.analyze(expression, context));
+
+      // Run type-aware diagnostics if ModelProvider is available
+      if (this.modelProviderService) {
+        try {
+          const typeAwareDiagnostics = await this.typeAwareDiagnosticValidator.validateWithTypeInfo(
+            expression,
+            document,
+            resourceType,
+            line
+          );
+          diagnostics.push(...typeAwareDiagnostics);
+        } catch (error) {
+          console.error('Type-aware diagnostics error:', error);
+        }
+      }
 
       return diagnostics;
     } catch (error) {
@@ -247,11 +276,13 @@ export class DiagnosticProvider {
           sessionLogger.debug('Starting semantic validation', { 
             parsePhase: 'semantic' 
           });
-          const semanticDiagnostics = await this.semanticValidator.validateSemantics(document, parseResult);
+          const resourceType = this.extractResourceTypeFromExpression(text);
+          const semanticDiagnostics = await this.semanticValidator.validateSemantics(document, parseResult, resourceType);
           diagnostics.push(...semanticDiagnostics);
           sessionLogger.debug('Semantic validation completed', { 
             parsePhase: 'semantic',
-            diagnosticCount: semanticDiagnostics.length 
+            diagnosticCount: semanticDiagnostics.length,
+            resourceType 
           });
 
           // Also run custom function validation
@@ -265,12 +296,22 @@ export class DiagnosticProvider {
             diagnosticCount: functionDiagnostics.length 
           });
 
+          // Run type-aware validation
+          sessionLogger.debug('Starting type-aware validation', { 
+            parsePhase: 'type-aware' 
+          });
+          const typeAwareDiagnostics = await this.typeAwareValidator.validate(document);
+          diagnostics.push(...typeAwareDiagnostics);
+          sessionLogger.debug('Type-aware validation completed', { 
+            parsePhase: 'type-aware',
+            diagnosticCount: typeAwareDiagnostics.length 
+          });
+
           // Run enhanced diagnostics
           sessionLogger.debug('Starting enhanced diagnostics', { 
             parsePhase: 'enhanced' 
           });
-          const resourceType = this.extractResourceTypeFromExpression(text);
-          const enhancedDiagnostics = this.runEnhancedDiagnostics(text, 0, document, resourceType);
+          const enhancedDiagnostics = await this.runEnhancedDiagnostics(text, 0, document, resourceType);
           diagnostics.push(...enhancedDiagnostics);
           sessionLogger.debug('Enhanced diagnostics completed', { 
             parsePhase: 'enhanced',
@@ -294,17 +335,45 @@ export class DiagnosticProvider {
 
             if (parseResult.success) {
               // For successful parses, run semantic validation
-              const semanticDiagnostics = await this.semanticValidator.validateExpression(document, expr.expression, expr.line, expr.column);
+              const exprText = expr.expression;
+              const resourceType = this.extractResourceTypeFromExpression(exprText);
+              
+              // Use context-aware validation if resource type is available
+              const semanticDiagnostics = resourceType 
+                ? await this.semanticValidator.validateExpressionWithContext(document, exprText, resourceType, expr.line, expr.column)
+                : await this.semanticValidator.validateExpression(document, exprText, expr.line, expr.column);
               diagnostics.push(...semanticDiagnostics);
 
               // Also run custom function validation for this expression
-              const exprText = expr.expression;
               const functionDiagnostics = await this.functionValidator.validateExpression(document, exprText, expr.line, expr.column);
               diagnostics.push(...functionDiagnostics);
 
+              // Run type-aware validation for this expression
+              const exprDocument = TextDocument.create(
+                `${document.uri}#expr-${expr.line}-${expr.column}`,
+                'fhirpath',
+                1,
+                exprText
+              );
+              const typeAwareDiagnostics = await this.typeAwareValidator.validate(exprDocument);
+              // Adjust ranges to match original document position
+              const adjustedTypeAwareDiagnostics = typeAwareDiagnostics.map(d => ({
+                ...d,
+                range: {
+                  start: {
+                    line: d.range.start.line + expr.line,
+                    character: d.range.start.character + (d.range.start.line === 0 ? expr.column : 0)
+                  },
+                  end: {
+                    line: d.range.end.line + expr.line,
+                    character: d.range.end.character + (d.range.end.line === 0 ? expr.column : 0)
+                  }
+                }
+              }));
+              diagnostics.push(...adjustedTypeAwareDiagnostics);
+
               // Run enhanced diagnostics for this expression
-              const resourceType = this.extractResourceTypeFromExpression(exprText);
-              const enhancedDiagnostics = this.runEnhancedDiagnostics(exprText, expr.line, document, resourceType);
+              const enhancedDiagnostics = await this.runEnhancedDiagnostics(exprText, expr.line, document, resourceType);
               diagnostics.push(...enhancedDiagnostics);
             } else {
               // For failed parses, convert errors and adjust their positions

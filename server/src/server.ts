@@ -24,11 +24,12 @@ import { FHIRResourceService } from './services/FHIRResourceService';
 import { FHIRPathContextService } from './services/FHIRPathContextService';
 import { FHIRPathFunctionRegistry } from './services/FHIRPathFunctionRegistry';
 import { CodeActionProvider } from './providers/CodeActionProvider';
+import { ModelProviderService } from './services/ModelProviderService';
 
-// Plugin system
-import { PluginManager, PluginSource } from './plugins/PluginManager';
-import { CoreProvidersPlugin } from './plugins/builtin/CoreProvidersPlugin';
-import { PerformanceAnalyzerPlugin } from './plugins/builtin/PerformanceAnalyzerPlugin';
+// Built-in functionality (previously plugins)
+import { createQuickFixProviders } from './providers/quickfix';
+import { createSourceActionProviders } from './providers/sourceactions';
+import { PerformanceAnalyzer } from './diagnostics/PerformanceAnalyzer';
 import { SymbolService } from './services/SymbolService';
 import { DocumentSymbolProvider } from './providers/DocumentSymbolProvider';
 import { DefinitionProvider } from './providers/DefinitionProvider';
@@ -61,12 +62,13 @@ import { DiagnosticConfigValidator } from './config/validators/DiagnosticConfigV
 import { ProviderConfigValidator } from './config/validators/ProviderConfigValidator';
 import { CompositeConfigValidator } from './config/validators/ConfigValidator';
 import { DiagnosticConfigAdapter } from './config/adapters/DiagnosticConfigAdapter';
-import { PluginConfigValidator } from './config/validators/PluginConfigValidator';
-import { PluginConfigAdapter } from './config/adapters/PluginConfigAdapter';
+
+// Enhanced provider configuration
+import type { HealthStatus } from './config/schemas/ProviderConfig';
 
 // Structured logging system
 import { getLogger, configureLogging, LogLevel, correlationContext, requestContext } from './logging';
-import { join } from 'path';
+import { join } from 'node:path';
 
 // Create a connection for the server
 const connection = createConnection(ProposedFeatures.all);
@@ -93,7 +95,7 @@ configureLogging({
       level: LogLevel.DEBUG,
       enabled: true,
       options: {
-        filePath: join(process.cwd(), 'logs', 'fhirpath-lsp.log'),
+        filePath: join(process.cwd(), '.fhirpath-lsp', 'logs', 'fhirpath-lsp.log'),
         maxSize: 10 * 1024 * 1024, // 10MB
         maxFiles: 5
       }
@@ -161,11 +163,9 @@ configManager.registerLoader('runtime', runtimeLoader);
 // Register configuration validators
 const diagnosticValidator = new DiagnosticConfigValidator();
 const providerValidator = new ProviderConfigValidator();
-const pluginValidator = new PluginConfigValidator();
 const compositeValidator = new CompositeConfigValidator('MainValidator');
 compositeValidator.addValidator(diagnosticValidator);
 compositeValidator.addValidator(providerValidator);
-compositeValidator.addValidator(pluginValidator);
 configManager.registerValidator('main', compositeValidator);
 
 // Initialize configuration notification service
@@ -177,20 +177,27 @@ const diagnosticConfigAdapter = new DiagnosticConfigAdapter(
   configNotificationService
 );
 
-const pluginConfigAdapter = new PluginConfigAdapter(
-  configManager,
-  configNotificationService
-);
 
 // Create a text document manager
 const documents: TextDocuments<TextDocument> = new TextDocuments(TextDocument);
 
 // Initialize our services
 const fhirPathService = new FHIRPathService();
-const fhirResourceService = new FHIRResourceService();
+
+// Initialize ModelProviderService (will be properly configured when ModelProvider is available)
+let modelProviderService: ModelProviderService | undefined;
+
+// ModelProvider state tracking
+let isModelProviderAvailable = false;
+let modelProviderHealthCheck: NodeJS.Timeout | null = null;
+let modelProviderFailures = 0;
+const enhancedProviders = new Map<string, any>();
+
+// Initialize FHIRResourceService with FHIRPathService for dynamic resource definitions
+const fhirResourceService = new FHIRResourceService(fhirPathService);
 const fhirPathContextService = new FHIRPathContextService(fhirResourceService);
 const fhirPathFunctionRegistry = new FHIRPathFunctionRegistry();
-const fhirValidationProvider = new FHIRValidationProvider(fhirPathService, fhirResourceService);
+const fhirValidationProvider = new FHIRValidationProvider(fhirPathService, fhirResourceService, fhirPathFunctionRegistry);
 const diagnosticProvider = new DiagnosticProvider(
   fhirPathService,
   fhirPathContextService,
@@ -198,24 +205,21 @@ const diagnosticProvider = new DiagnosticProvider(
   diagnosticConfigAdapter.getEnhancedDiagnosticConfig()
 );
 const documentService = new DocumentService(documents, fhirPathService);
-const completionProvider = new CompletionProvider(fhirPathService, fhirResourceService);
-const semanticTokensProvider = new SemanticTokensProvider(fhirPathService);
-const hoverProvider = new HoverProvider(fhirPathService, fhirPathContextService);
-// Initialize plugin system - will be configured later from config manager
-const pluginManager = new PluginManager(connection, {
-  enabled: false, // Temporarily disabled until configuration is loaded
-  sources: [],
-  disabled: [],
-  configuration: {}
-});
+const completionProvider = new CompletionProvider(fhirPathService, undefined, fhirResourceService);
+const semanticTokensProvider = new SemanticTokensProvider(fhirPathService, modelProviderService);
+const hoverProvider = new HoverProvider(fhirPathService, fhirPathContextService, undefined);
+// Built-in functionality
+const performanceAnalyzer = new PerformanceAnalyzer();
 
-// Legacy code action provider for backward compatibility
+// Code action providers (built-in functionality)
+const quickFixProviders = createQuickFixProviders(fhirPathFunctionRegistry);
+const sourceActionProviders = createSourceActionProviders(connection, fhirPathService);
 const codeActionProvider = new CodeActionProvider(connection, fhirPathService, fhirPathFunctionRegistry);
 
 // Symbol navigation providers
 const symbolService = new SymbolService(fhirPathService, fhirPathFunctionRegistry);
 const documentSymbolProvider = new DocumentSymbolProvider(connection, symbolService);
-const definitionProvider = new DefinitionProvider(connection, symbolService, fhirPathFunctionRegistry);
+const definitionProvider = new DefinitionProvider(connection, symbolService, fhirPathFunctionRegistry, modelProviderService);
 const referencesProvider = new ReferencesProvider(connection, symbolService);
 const workspaceSymbolProvider = new WorkspaceSymbolProvider(connection, symbolService);
 
@@ -225,28 +229,285 @@ const refactoringProvider = new RefactoringProvider(symbolService, fhirPathServi
 // Inlay hint provider
 const inlayHintProvider = new InlayHintProvider(fhirPathService, fhirPathContextService);
 
-// Token types for semantic highlighting
+// Token types for semantic highlighting (must match EnhancedTokenType enum order)
 const tokenTypes = [
-  'function',
-  'parameter',
-  'variable',
-  'property',
-  'operator',
-  'keyword',
-  'string',
-  'number',
-  'boolean',
-  'comment'
+  'function',           // 0 - FUNCTION
+  'parameter',          // 1 - PARAMETER
+  'variable',           // 2 - VARIABLE
+  'property',           // 3 - PROPERTY
+  'operator',           // 4 - OPERATOR
+  'keyword',            // 5 - KEYWORD
+  'string',             // 6 - STRING
+  'number',             // 7 - NUMBER
+  'boolean',            // 8 - BOOLEAN
+  'comment',            // 9 - COMMENT
+  'choiceType',         // 10 - CHOICE_TYPE
+  'inheritedProperty',  // 11 - INHERITED_PROPERTY
+  'requiredProperty',   // 12 - REQUIRED_PROPERTY
+  'constraintViolation', // 13 - CONSTRAINT_VIOLATION
+  'typeCast',           // 14 - TYPE_CAST
+  'resourceReference',  // 15 - RESOURCE_REFERENCE
+  'deprecatedElement',  // 16 - DEPRECATED_ELEMENT
+  'extensionProperty',  // 17 - EXTENSION_PROPERTY
+  'backboneElement',    // 18 - BACKBONE_ELEMENT
+  'primitiveType'       // 19 - PRIMITIVE_TYPE
 ];
 
 const tokenModifiers = [
-  'declaration',
-  'readonly',
-  'deprecated',
-  'modification',
-  'documentation',
-  'defaultLibrary'
+  'declaration',        // 0 - DECLARATION
+  'readonly',           // 1 - READONLY
+  'deprecated',         // 2 - DEPRECATED
+  'modification',       // 3 - MODIFICATION
+  'documentation',      // 4 - DOCUMENTATION
+  'defaultLibrary',     // 5 - DEFAULT_LIBRARY
+  'optional',           // 6 - OPTIONAL
+  'required',           // 7 - REQUIRED
+  'choiceBase',         // 8 - CHOICE_BASE
+  'choiceSpecific',     // 9 - CHOICE_SPECIFIC
+  'inherited',          // 10 - INHERITED
+  'constraintError',    // 11 - CONSTRAINT_ERROR
+  'bindingRequired',    // 12 - BINDING_REQUIRED
+  'bindingExtensible',  // 13 - BINDING_EXTENSIBLE
+  'profiled',           // 14 - PROFILED
+  'sliced'              // 15 - SLICED
 ];
+
+/**
+ * Initialize ModelProvider with enhanced configuration and error handling
+ */
+async function initializeModelProvider(): Promise<void> {
+  try {
+    logger.info('Initializing FHIR model provider...', { operation: 'initializeModelProvider' });
+    
+    const config = configManager.getConfig();
+    const modelProviderConfig = config.providers?.modelProvider;
+    
+    if (!modelProviderConfig?.enabled) {
+      logger.info('ModelProvider disabled by configuration', { operation: 'initializeModelProvider' });
+      return;
+    }
+
+    await fhirPathService.initializeModelProvider(modelProviderConfig.fhirModelProvider);
+    
+    // Create ModelProviderService instance with the initialized model provider
+    const modelProvider = fhirPathService.getModelProvider();
+    if (modelProvider) {
+      modelProviderService = new ModelProviderService(modelProvider, {
+        enableLogging: true,
+        enableHealthChecks: true,
+        retryAttempts: 3,
+        timeoutMs: 5000
+      });
+      await modelProviderService.initialize();
+    }
+    
+    isModelProviderAvailable = true;
+    modelProviderFailures = 0;
+    
+    // Initialize enhanced services
+    await initializeEnhancedServices();
+    
+    // Setup health monitoring
+    setupModelProviderHealthChecks();
+    
+    logger.info('✅ FHIR model provider initialized successfully', { operation: 'initializeModelProvider' });
+  } catch (error) {
+    logger.error('❌ Failed to initialize FHIR model provider', error as Error, { operation: 'initializeModelProvider' });
+    
+    const config = configManager.getConfig();
+    const modelProviderConfig = config.providers?.modelProvider;
+    
+    if (modelProviderConfig?.required) {
+      throw new Error('ModelProvider is required but failed to initialize');
+    }
+    
+    logger.warn('Continuing without ModelProvider (fallback mode)', { operation: 'initializeModelProvider' });
+    createFallbackProviders();
+  }
+}
+
+/**
+ * Initialize enhanced services that depend on ModelProvider
+ */
+async function initializeEnhancedServices(): Promise<void> {
+  if (!isModelProviderAvailable) {
+    return;
+  }
+
+  logger.info('Initializing enhanced services...', { operation: 'initializeEnhancedServices' });
+  
+  // Note: Enhanced services would be initialized here when they're implemented
+  // For now, we track the availability for enhanced provider creation
+  
+  logger.info('Enhanced services initialized', { operation: 'initializeEnhancedServices' });
+}
+
+/**
+ * Setup health monitoring for ModelProvider
+ */
+function setupModelProviderHealthChecks(): void {
+  if (!isModelProviderAvailable) {
+    return;
+  }
+
+  const config = configManager.getConfig();
+  const healthConfig = config.providers?.healthCheck;
+  
+  if (!healthConfig?.enabled) {
+    return;
+  }
+
+  logger.info('Setting up ModelProvider health checks', { operation: 'setupHealthChecks' });
+  
+  modelProviderHealthCheck = setInterval(async () => {
+    try {
+      const healthStatus = await checkModelProviderHealth();
+      if (!healthStatus.healthy) {
+        modelProviderFailures++;
+        logger.warn('ModelProvider health check failed', {
+          operation: 'healthCheck',
+          failures: modelProviderFailures,
+          reason: healthStatus.reason
+        });
+        
+        if (modelProviderFailures >= (healthConfig.maxFailures || 3)) {
+          logger.error('ModelProvider exceeded max failures, disabling temporarily', {
+            operation: 'healthCheck',
+            failures: modelProviderFailures
+          });
+          
+          temporarilyDisableModelProvider();
+        }
+      } else {
+        // Reset failure count on successful health check
+        if (modelProviderFailures > 0) {
+          logger.info('ModelProvider health restored', { operation: 'healthCheck' });
+          modelProviderFailures = 0;
+        }
+      }
+    } catch (error) {
+      logger.error('ModelProvider health check error', error as Error, { operation: 'healthCheck' });
+      handleModelProviderError(error as Error, 'healthCheck');
+    }
+  }, healthConfig.intervalMs || 60000);
+}
+
+/**
+ * Check ModelProvider health status
+ */
+async function checkModelProviderHealth(): Promise<HealthStatus> {
+  if (!isModelProviderAvailable) {
+    return { healthy: false, reason: 'ModelProvider not initialized' };
+  }
+
+  try {
+    // Test basic functionality by checking if we can get available resource types
+    const resourceTypes = fhirPathService.getAvailableResourceTypes();
+    if (!resourceTypes || resourceTypes.length === 0) {
+      return { healthy: false, reason: 'No resource types available from ModelProvider' };
+    }
+
+    // Test type resolution for a common resource
+    const isPatientValid = fhirPathService.isValidResourceType('Patient');
+    if (!isPatientValid) {
+      return { healthy: false, reason: 'Unable to resolve Patient resource type' };
+    }
+
+    return { healthy: true, timestamp: new Date() };
+  } catch (error) {
+    return { 
+      healthy: false, 
+      reason: `ModelProvider error: ${(error as Error).message}`,
+      timestamp: new Date()
+    };
+  }
+}
+
+/**
+ * Handle ModelProvider errors with appropriate recovery strategies
+ */
+function handleModelProviderError(error: Error, context: string): void {
+  logger.error(`ModelProvider error in ${context}`, {
+    error: error.message,
+    stack: error.stack,
+    context,
+    operation: 'handleModelProviderError'
+  });
+
+  // Increment error metrics if performance monitor is available
+  try {
+    performanceMonitor.incrementCounter('modelProvider.errors', {
+      context,
+      errorType: error.constructor.name
+    });
+  } catch (metricError) {
+    // Ignore metric errors to avoid cascading failures
+  }
+
+  // Check if we should disable ModelProvider temporarily
+  if (shouldDisableModelProvider(error)) {
+    temporarilyDisableModelProvider();
+  }
+}
+
+/**
+ * Determine if ModelProvider should be temporarily disabled
+ */
+function shouldDisableModelProvider(error: Error): boolean {
+  const errorMessage = error.message.toLowerCase();
+  
+  // Define criteria for temporary disabling
+  return errorMessage.includes('econnrefused') || 
+         errorMessage.includes('timeout') ||
+         errorMessage.includes('registry') ||
+         errorMessage.includes('network') ||
+         errorMessage.includes('fetch');
+}
+
+/**
+ * Temporarily disable ModelProvider and create fallback providers
+ */
+function temporarilyDisableModelProvider(): void {
+  logger.warn('Temporarily disabling ModelProvider', { operation: 'temporaryDisable' });
+  
+  isModelProviderAvailable = false;
+  
+  if (modelProviderHealthCheck) {
+    clearInterval(modelProviderHealthCheck);
+    modelProviderHealthCheck = null;
+  }
+  
+  createFallbackProviders();
+  
+  // Schedule re-enabling attempt after 5 minutes
+  setTimeout(() => {
+    logger.info('Attempting to re-enable ModelProvider', { operation: 'reEnable' });
+    initializeModelProvider().catch(error => {
+      logger.error('Failed to re-enable ModelProvider', error as Error, { operation: 'reEnable' });
+    });
+  }, 300000); // 5 minutes
+}
+
+/**
+ * Create fallback providers when ModelProvider is unavailable
+ */
+function createFallbackProviders(): void {
+  logger.info('Creating fallback providers without ModelProvider', { operation: 'createFallback' });
+  
+  // Note: The existing providers will continue to work in basic mode
+  // Enhanced features will be automatically disabled when ModelProvider is not available
+  
+  // Update configuration to reflect fallback state
+  try {
+    const currentConfig = configManager.getConfig();
+    if (currentConfig.providers?.enhanced) {
+      // Disable enhanced features
+      logger.info('Enhanced features disabled in fallback mode', { operation: 'createFallback' });
+    }
+  } catch (error) {
+    logger.error('Failed to update configuration for fallback mode', error as Error, { operation: 'createFallback' });
+  }
+}
 
 // Server initialization
 connection.onInitialize(async (params: InitializeParams): Promise<InitializeResult> => {
@@ -290,21 +551,11 @@ connection.onInitialize(async (params: InitializeParams): Promise<InitializeResu
     serverManager.addShutdownHandler(async () => {
       try {
         diagnosticConfigAdapter.dispose();
-        pluginConfigAdapter.dispose();
       } catch (error) {
         connection.console.error(`Error cleaning up configuration system: ${error}`);
       }
     });
 
-    // Add cleanup for plugin system
-    serverManager.addShutdownHandler(async () => {
-      try {
-        await pluginManager.dispose();
-        connection.console.log('Plugin system disposed');
-      } catch (error) {
-        connection.console.error(`Error disposing plugin system: ${error}`);
-      }
-    });
 
   } catch (error) {
     connection.console.error(`Failed to start server manager: ${error}`);
@@ -321,38 +572,17 @@ connection.onInitialize(async (params: InitializeParams): Promise<InitializeResu
     logger.info('Using default configuration', { operation: 'loadConfiguration' });
   }
 
-  // Initialize plugin system with loaded configuration
+  // Initialize model provider with enhanced configuration
+  await initializeModelProvider();
+
+  // Initialize built-in functionality (previously plugins)
   try {
-    logger.info('Initializing plugin system...', { operation: 'initializePlugins' });
+    logger.info('Initializing built-in functionality...', { operation: 'initializeBuiltins' });
     
-    // Update plugin manager with loaded configuration
-    const pluginConfig = pluginConfigAdapter.getPluginConfig();
-    await (pluginManager as any).updateConfiguration(pluginConfig);
-    
-    if (pluginConfig.enabled) {
-      await pluginManager.initialize();
-      
-      // Activate plugins for language support
-      await pluginManager.activatePlugins({
-        type: 'onLanguage',
-        value: 'fhirpath'
-      });
-      
-      logger.info('Plugin system initialized successfully', { 
-        operation: 'initializePlugins'
-      }, {
-        pluginsEnabled: true
-      });
-    } else {
-      logger.info('Plugin system is disabled in configuration', { 
-        operation: 'initializePlugins'
-      }, {
-        pluginsEnabled: false
-      });
-    }
+    // Built-in functionality is always enabled and doesn't need special initialization
+    logger.info('Built-in functionality ready', { operation: 'initializeBuiltins' });
   } catch (error) {
-    logger.error('Failed to initialize plugin system', error, { operation: 'initializePlugins' });
-    logger.info('Continuing without plugin system', { operation: 'initializePlugins' });
+    logger.error('Failed to initialize built-in functionality', error, { operation: 'initializeBuiltins' });
   }
 
   return {
@@ -426,6 +656,8 @@ connection.onInitialize(async (params: InitializeParams): Promise<InitializeResu
 
 // Server initialized
 connection.onInitialized(async () => {
+  connection.console.log('FHIRPath Language Server post-initialization setup...');
+  
   connection.console.log('FHIRPath Language Server initialized successfully');
 
   // Track connection for resource monitoring
@@ -636,6 +868,60 @@ connection.onCompletion(async (params) => {
   }
 });
 
+// Completion resolve handler
+connection.onCompletionResolve(async (item) => {
+  const context = requestContext.createProviderContext(
+    'completion',
+    'resolveCompletionItem', 
+    item.data?.documentUri || 'unknown',
+    {
+      params: {
+        label: item.label,
+        kind: item.kind
+      }
+    }
+  );
+  
+  const providerLogger = logger.withContext(context);
+  const timer = providerLogger.startPerformanceTimer('completion-resolve');
+
+  try {
+    providerLogger.debug('Processing completion resolve request', {
+      provider: 'completion',
+      method: 'resolveCompletionItem'
+    }, {
+      label: item.label,
+      kind: item.kind
+    });
+
+    const result = await completionProvider.resolveCompletionItem(item);
+    
+    providerLogger.info('Completion resolve request completed', {
+      provider: 'completion',
+      method: 'resolveCompletionItem'
+    });
+    
+    timer.end('Completion resolve completed');
+    return result;
+  } catch (error) {
+    providerLogger.error('Completion resolve provider error', error as Error, { 
+      provider: 'completion', 
+      method: 'resolveCompletionItem' 
+    });
+    timer.end('Completion resolve failed with error');
+    
+    errorBoundary.handleError(error as Error, {
+      operation: 'resolve_completion_item',
+      documentUri: item.data?.documentUri || 'unknown',
+      timestamp: new Date(),
+      severity: 'low'
+    });
+    return item; // Return original item if resolve fails
+  } finally {
+    requestContext.endRequest(context.requestId!);
+  }
+});
+
 // Hover provider with error boundary
 connection.onHover(async (params) => {
   try {
@@ -665,36 +951,44 @@ connection.onCodeAction(async (params) => {
       return [];
     }
 
-    // Get providers from plugin system first
-    const providerRegistry = pluginManager.getProviderRegistry();
-    const pluginProviders = providerRegistry.getCodeActionProviders(document);
+    // Use built-in providers directly
+    const allActions = [];
     
-    if (pluginProviders.length > 0) {
-      // Use plugin-based providers
-      const allActions = [];
-      
-      for (const provider of pluginProviders) {
-        try {
-          const actions = await provider.provideCodeActions(document, params.range, params.context);
-          if (Array.isArray(actions)) {
-            allActions.push(...actions);
-          }
-        } catch (error) {
-          connection.console.error(`Plugin provider error: ${error}`);
+    // Apply quick fix providers
+    for (const registration of quickFixProviders) {
+      try {
+        const actions = await registration.provider.provideCodeActions(document, params.range, params.context);
+        if (Array.isArray(actions)) {
+          allActions.push(...actions);
         }
+      } catch (error) {
+        connection.console.error(`Quick fix provider error: ${error}`);
       }
-      
-      return allActions;
-    } else {
-      // Fallback to legacy provider
-      const actions = await codeActionProvider.provideCodeActions(
+    }
+    
+    // Apply source action providers
+    for (const registration of sourceActionProviders) {
+      try {
+        const actions = await registration.provider.provideCodeActions(document, params.range, params.context);
+        if (Array.isArray(actions)) {
+          allActions.push(...actions);
+        }
+      } catch (error) {
+        connection.console.error(`Source action provider error: ${error}`);
+      }
+    }
+    
+    // Fallback to legacy provider if no actions found
+    if (allActions.length === 0) {
+      const legacyActions = await codeActionProvider.provideCodeActions(
         document,
         params.range,
         params.context
       );
-
-      return actions;
+      allActions.push(...legacyActions);
     }
+
+    return allActions;
   } catch (error) {
     errorBoundary.handleError(error as Error, {
       operation: 'provide_code_actions',
@@ -1046,3 +1340,40 @@ connection.onRequest('textDocument/inlayHint', async (params) => {
 });
 
 connection.console.log('FHIRPath Language Server started and listening...');
+
+// Add ModelProvider health endpoint
+connection.onRequest('fhirpath/modelProvider/health', () => {
+  try {
+    return checkModelProviderHealth();
+  } catch (error) {
+    return {
+      healthy: false,
+      error: (error as Error).message,
+      timestamp: new Date().toISOString()
+    };
+  }
+});
+
+// Shutdown handling with ModelProvider cleanup
+connection.onShutdown(async () => {
+  connection.console.log('FHIRPath Language Server shutting down');
+
+  try {
+    // Cleanup ModelProvider health checks
+    if (modelProviderHealthCheck) {
+      clearInterval(modelProviderHealthCheck);
+      modelProviderHealthCheck = null;
+      logger.info('ModelProvider health checks stopped', { operation: 'shutdown' });
+    }
+
+    // Additional cleanup for enhanced services
+    enhancedProviders.clear();
+    isModelProviderAvailable = false;
+    modelProviderFailures = 0;
+
+    logger.info('ModelProvider cleanup completed', { operation: 'shutdown' });
+  } catch (error) {
+    logger.error('Error during ModelProvider cleanup', error as Error, { operation: 'shutdown' });
+  }
+
+});

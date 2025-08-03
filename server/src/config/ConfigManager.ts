@@ -11,7 +11,6 @@ import {
 } from './schemas/BaseConfig';
 import { DiagnosticConfig, DEFAULT_DIAGNOSTIC_CONFIG } from './schemas/DiagnosticConfig';
 import { ProviderConfig, DEFAULT_PROVIDER_CONFIG } from './schemas/ProviderConfig';
-import { PluginConfig, DEFAULT_PLUGIN_CONFIG } from './schemas/PluginConfig';
 
 /**
  * Main configuration interface that combines all service configurations
@@ -19,7 +18,6 @@ import { PluginConfig, DEFAULT_PLUGIN_CONFIG } from './schemas/PluginConfig';
 export interface AppConfig extends BaseConfig {
   diagnostics: DiagnosticConfig;
   providers: ProviderConfig;
-  plugins: PluginConfig;
 }
 
 /**
@@ -29,8 +27,7 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
   enabled: true,
   version: '1.0.0',
   diagnostics: DEFAULT_DIAGNOSTIC_CONFIG,
-  providers: DEFAULT_PROVIDER_CONFIG,
-  plugins: DEFAULT_PLUGIN_CONFIG
+  providers: DEFAULT_PROVIDER_CONFIG
 };
 
 /**

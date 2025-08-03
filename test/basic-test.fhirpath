@@ -1,4 +1,4 @@
 // @inputfile patient-example.json
+// @resource Patient
 //
-//
-Patient.name.given.join(' | ')
+Patient.address

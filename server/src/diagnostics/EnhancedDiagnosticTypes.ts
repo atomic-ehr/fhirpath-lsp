@@ -13,7 +13,10 @@ export enum EnhancedDiagnosticCategory {
   FHIRBestPractices = 'fhir-best-practices',
   Maintainability = 'maintainability',
   Security = 'security',
-  Compatibility = 'compatibility'
+  Compatibility = 'compatibility',
+  TypeSafety = 'type-safety',
+  ChoiceTypes = 'choice-types',
+  ConstraintViolation = 'constraint-violation'
 }
 
 /**
@@ -41,6 +44,42 @@ export interface EnhancedDiagnostic extends Diagnostic {
     newText: string;
     range?: Range;
   };
+  typeInfo?: TypeAwareDiagnosticInfo;
+}
+
+/**
+ * Type-aware diagnostic information
+ */
+export interface TypeAwareDiagnosticInfo {
+  expectedType?: string;
+  actualType?: string;
+  resourceType?: string;
+  propertyPath?: string[];
+  availableChoices?: string[];
+  suggestedProperty?: string;
+  constraints?: ConstraintViolation[];
+}
+
+/**
+ * Choice type validation result
+ */
+export interface ChoiceTypeDiagnostic extends EnhancedDiagnostic {
+  choiceInfo: {
+    baseProperty: string;
+    availableChoices: string[];
+    suggestedChoice?: string;
+    actualProperty: string;
+  };
+}
+
+/**
+ * Constraint violation information
+ */
+export interface ConstraintViolation {
+  type: 'cardinality' | 'required' | 'datatype' | 'pattern' | 'fixed';
+  description: string;
+  expectedValue?: any;
+  actualValue?: any;
 }
 
 /**

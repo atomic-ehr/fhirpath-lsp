@@ -30,6 +30,18 @@ export interface LogContext {
   requestId?: string;
   source?: LogSource;
   tags?: string[];
+  
+  // Additional properties for configuration and diagnostics
+  enabled?: boolean;
+  transportName?: string;
+  newLevel?: string;
+  filterType?: string;
+  filterName?: string;
+  parsePhase?: string;
+  provider?: string;
+  
+  // Allow any additional context properties
+  [key: string]: any;
 }
 
 export interface LogSource {
