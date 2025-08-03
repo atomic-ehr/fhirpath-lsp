@@ -29,7 +29,6 @@ import { ModelProviderService } from './services/ModelProviderService';
 // Built-in functionality (previously plugins)
 import { createQuickFixProviders } from './providers/quickfix';
 import { createSourceActionProviders } from './providers/sourceactions';
-import { PerformanceAnalyzer } from './diagnostics/PerformanceAnalyzer';
 import { SymbolService } from './services/SymbolService';
 import { DocumentSymbolProvider } from './providers/DocumentSymbolProvider';
 import { DefinitionProvider } from './providers/DefinitionProvider';
@@ -44,13 +43,6 @@ import { ProductionErrorBoundary, ConsoleErrorReporter } from './services/ErrorB
 import { ProductionResourceMonitor } from './services/ResourceMonitor';
 import { ProductionHealthChecker } from './services/HealthChecker';
 
-// Performance optimization services
-import { getMemoryManager } from './services/MemoryManager';
-import { getBackgroundProcessor } from './services/BackgroundProcessor';
-import { AdaptiveRequestThrottler } from './services/RequestThrottler';
-import { getGlobalProfiler } from './utils/PerformanceProfiler';
-import { getPerformanceMonitor } from './logging/PerformanceMonitor';
-import { WorkspaceOptimizer, categorizeWorkspace } from './utils/WorkspaceOptimizer';
 
 // Centralized configuration system
 import { ConfigManager, DEFAULT_APP_CONFIG } from './config/ConfigManager';
@@ -66,59 +58,36 @@ import { DiagnosticConfigAdapter } from './config/adapters/DiagnosticConfigAdapt
 // Enhanced provider configuration
 import type { HealthStatus } from './config/schemas/ProviderConfig';
 
-// Structured logging system
-import { getLogger, configureLogging, LogLevel, correlationContext, requestContext } from './logging';
+// Simple logging
 import { join } from 'node:path';
+
+// Simple logger implementation
+class SimpleLogger {
+  debug(message: string, ...args: any[]) {
+    // Only log to console in development
+    if (process.env.NODE_ENV === 'development') {
+      console.debug(`[DEBUG] ${message}`, ...args);
+    }
+  }
+  
+  info(message: string, ...args: any[]) {
+    console.info(`[INFO] ${message}`, ...args);
+  }
+  
+  warn(message: string, ...args: any[]) {
+    console.warn(`[WARN] ${message}`, ...args);
+  }
+  
+  error(message: string, ...args: any[]) {
+    console.error(`[ERROR] ${message}`, ...args);
+  }
+}
+
+const logger = new SimpleLogger();
 
 // Create a connection for the server
 const connection = createConnection(ProposedFeatures.all);
 
-// Configure structured logging
-configureLogging({
-  level: LogLevel.INFO,
-  transports: [
-    {
-      type: 'console',
-      name: 'server-console',
-      level: LogLevel.INFO,
-      enabled: true,
-      options: {
-        colorize: false, // LSP output should not have colors
-        includeTimestamp: true,
-        includeContext: true,
-        includeSource: false
-      }
-    },
-    {
-      type: 'file',
-      name: 'server-file',
-      level: LogLevel.DEBUG,
-      enabled: true,
-      options: {
-        filePath: join(process.cwd(), '.fhirpath-lsp', 'logs', 'fhirpath-lsp.log'),
-        maxSize: 10 * 1024 * 1024, // 10MB
-        maxFiles: 5
-      }
-    }
-  ],
-  correlationId: {
-    enabled: true,
-    generator: 'short'
-  },
-  context: {
-    includeSource: false,
-    includePerformance: true,
-    defaultTags: ['fhirpath-lsp', 'server']
-  },
-  performance: {
-    enableTimers: true,
-    enableMemoryTracking: true,
-    enableCpuTracking: false
-  }
-});
-
-// Create the main server logger
-const logger = getLogger('server');
 
 // Initialize production infrastructure
 const errorReporter = new ConsoleErrorReporter(connection);
@@ -126,18 +95,6 @@ const errorBoundary = new ProductionErrorBoundary(connection, errorReporter);
 const resourceMonitor = new ProductionResourceMonitor(connection);
 const healthChecker = new ProductionHealthChecker(connection);
 
-// Initialize performance optimization infrastructure
-const memoryManager = getMemoryManager();
-const backgroundProcessor = getBackgroundProcessor();
-const requestThrottler = new AdaptiveRequestThrottler();
-const profiler = getGlobalProfiler();
-const performanceMonitor = getPerformanceMonitor({
-  enabled: true,
-  logLevel: LogLevel.INFO,
-  memoryTracking: true,
-  cpuTracking: false
-});
-const workspaceOptimizer = new WorkspaceOptimizer();
 
 const serverManager = new ProductionServerManager(
   connection,
@@ -209,8 +166,6 @@ const documentService = new DocumentService(documents, fhirPathService);
 let completionProvider: CompletionProvider;
 let semanticTokensProvider: SemanticTokensProvider;
 let hoverProvider: HoverProvider;
-// Built-in functionality
-const performanceAnalyzer = new PerformanceAnalyzer();
 
 // Code action providers (built-in functionality)
 const quickFixProviders = createQuickFixProviders(fhirPathFunctionRegistry);
@@ -278,13 +233,13 @@ const tokenModifiers = [
  */
 async function initializeModelProvider(): Promise<void> {
   try {
-    logger.info('Initializing FHIR model provider...', { operation: 'initializeModelProvider' });
+    logger.info('Initializing FHIR model provider...');
     
     const config = configManager.getConfig();
     const modelProviderConfig = config.providers?.modelProvider;
     
     if (!modelProviderConfig?.enabled) {
-      logger.info('ModelProvider disabled by configuration', { operation: 'initializeModelProvider' });
+      logger.info('ModelProvider disabled by configuration');
       return;
     }
 
@@ -311,9 +266,9 @@ async function initializeModelProvider(): Promise<void> {
     // Setup health monitoring
     setupModelProviderHealthChecks();
     
-    logger.info('✅ FHIR model provider initialized successfully', { operation: 'initializeModelProvider' });
+    logger.info('✅ FHIR model provider initialized successfully');
   } catch (error) {
-    logger.error('❌ Failed to initialize FHIR model provider', error as Error, { operation: 'initializeModelProvider' });
+    logger.error('❌ Failed to initialize FHIR model provider', error);
     
     const config = configManager.getConfig();
     const modelProviderConfig = config.providers?.modelProvider;
@@ -322,7 +277,7 @@ async function initializeModelProvider(): Promise<void> {
       throw new Error('ModelProvider is required but failed to initialize');
     }
     
-    logger.warn('Continuing without ModelProvider (fallback mode)', { operation: 'initializeModelProvider' });
+    logger.warn('Continuing without ModelProvider (fallback mode)');
     createFallbackProviders();
   }
 }
@@ -335,14 +290,14 @@ async function initializeEnhancedServices(): Promise<void> {
     return;
   }
 
-  logger.info('Initializing enhanced services...', { operation: 'initializeEnhancedServices' });
+  logger.info('Initializing enhanced services...');
   
   // Create providers with ModelProvider now that it's available
   completionProvider = new CompletionProvider(fhirPathService, modelProviderService, fhirResourceService);
   semanticTokensProvider = new SemanticTokensProvider(fhirPathService, modelProviderService);
   hoverProvider = new HoverProvider(fhirPathService, fhirPathContextService, modelProviderService);
   
-  logger.info('✅ Enhanced services initialized with ModelProvider', { operation: 'initializeEnhancedServices' });
+  logger.info('✅ Enhanced services initialized with ModelProvider');
 }
 
 /**
@@ -360,36 +315,29 @@ function setupModelProviderHealthChecks(): void {
     return;
   }
 
-  logger.info('Setting up ModelProvider health checks', { operation: 'setupHealthChecks' });
+  logger.info('Setting up ModelProvider health checks');
   
   modelProviderHealthCheck = setInterval(async () => {
     try {
       const healthStatus = await checkModelProviderHealth();
       if (!healthStatus.healthy) {
         modelProviderFailures++;
-        logger.warn('ModelProvider health check failed', {
-          operation: 'healthCheck',
-          failures: modelProviderFailures,
-          reason: healthStatus.reason
-        });
+        logger.warn(`ModelProvider health check failed (${modelProviderFailures} failures): ${healthStatus.reason}`);
         
         if (modelProviderFailures >= (healthConfig.maxFailures || 3)) {
-          logger.error('ModelProvider exceeded max failures, disabling temporarily', {
-            operation: 'healthCheck',
-            failures: modelProviderFailures
-          });
+          logger.error(`ModelProvider exceeded max failures (${modelProviderFailures}), disabling temporarily`);
           
           temporarilyDisableModelProvider();
         }
       } else {
         // Reset failure count on successful health check
         if (modelProviderFailures > 0) {
-          logger.info('ModelProvider health restored', { operation: 'healthCheck' });
+          logger.info('ModelProvider health restored');
           modelProviderFailures = 0;
         }
       }
     } catch (error) {
-      logger.error('ModelProvider health check error', error as Error, { operation: 'healthCheck' });
+      logger.error('ModelProvider health check error', error);
       handleModelProviderError(error as Error, 'healthCheck');
     }
   }, healthConfig.intervalMs || 60000);
@@ -430,22 +378,8 @@ async function checkModelProviderHealth(): Promise<HealthStatus> {
  * Handle ModelProvider errors with appropriate recovery strategies
  */
 function handleModelProviderError(error: Error, context: string): void {
-  logger.error(`ModelProvider error in ${context}`, {
-    error: error.message,
-    stack: error.stack,
-    context,
-    operation: 'handleModelProviderError'
-  });
+  logger.error(`ModelProvider error in ${context}: ${error.message}`);
 
-  // Increment error metrics if performance monitor is available
-  try {
-    performanceMonitor.incrementCounter('modelProvider.errors', {
-      context,
-      errorType: error.constructor.name
-    });
-  } catch (metricError) {
-    // Ignore metric errors to avoid cascading failures
-  }
 
   // Check if we should disable ModelProvider temporarily
   if (shouldDisableModelProvider(error)) {
@@ -471,7 +405,7 @@ function shouldDisableModelProvider(error: Error): boolean {
  * Temporarily disable ModelProvider and create fallback providers
  */
 function temporarilyDisableModelProvider(): void {
-  logger.warn('Temporarily disabling ModelProvider', { operation: 'temporaryDisable' });
+  logger.warn('Temporarily disabling ModelProvider');
   
   isModelProviderAvailable = false;
   
@@ -484,9 +418,9 @@ function temporarilyDisableModelProvider(): void {
   
   // Schedule re-enabling attempt after 5 minutes
   setTimeout(() => {
-    logger.info('Attempting to re-enable ModelProvider', { operation: 'reEnable' });
+    logger.info('Attempting to re-enable ModelProvider');
     initializeModelProvider().catch(error => {
-      logger.error('Failed to re-enable ModelProvider', error as Error, { operation: 'reEnable' });
+      logger.error('Failed to re-enable ModelProvider', error);
     });
   }, 300000); // 5 minutes
 }
@@ -495,24 +429,24 @@ function temporarilyDisableModelProvider(): void {
  * Create fallback providers when ModelProvider is unavailable
  */
 function createFallbackProviders(): void {
-  logger.info('Creating fallback providers without ModelProvider', { operation: 'createFallback' });
+  logger.info('Creating fallback providers without ModelProvider');
   
   // Create providers without ModelProvider for basic functionality
   completionProvider = new CompletionProvider(fhirPathService, undefined, fhirResourceService);
   semanticTokensProvider = new SemanticTokensProvider(fhirPathService, undefined);
   hoverProvider = new HoverProvider(fhirPathService, fhirPathContextService, undefined);
   
-  logger.info('⚠️ Fallback providers created (limited functionality)', { operation: 'createFallback' });
+  logger.info('⚠️ Fallback providers created (limited functionality)');
   
   // Update configuration to reflect fallback state
   try {
     const currentConfig = configManager.getConfig();
     if (currentConfig.providers?.enhanced) {
       // Disable enhanced features
-      logger.info('Enhanced features disabled in fallback mode', { operation: 'createFallback' });
+      logger.info('Enhanced features disabled in fallback mode');
     }
   } catch (error) {
-    logger.error('Failed to update configuration for fallback mode', error as Error, { operation: 'createFallback' });
+    logger.error('Failed to update configuration for fallback mode', error);
   }
 }
 
@@ -571,32 +505,32 @@ connection.onInitialize(async (params: InitializeParams): Promise<InitializeResu
 
   // Load configuration from all sources
   try {
-    logger.info('Loading configuration...', { operation: 'loadConfiguration' });
+    logger.info('Loading configuration...');
     await configManager.loadConfiguration();
-    logger.info('Configuration loaded successfully', { operation: 'loadConfiguration' });
+    logger.info('Configuration loaded successfully');
   } catch (error) {
-    logger.warn('Failed to load configuration', error, { operation: 'loadConfiguration' });
-    logger.info('Using default configuration', { operation: 'loadConfiguration' });
+    logger.warn('Failed to load configuration', error);
+    logger.info('Using default configuration');
   }
 
   // Create initial providers (will be recreated with ModelProvider if available)
-  logger.info('Creating initial providers...', { operation: 'createInitialProviders' });
+  logger.info('Creating initial providers...');
   completionProvider = new CompletionProvider(fhirPathService, undefined, fhirResourceService);
   semanticTokensProvider = new SemanticTokensProvider(fhirPathService, undefined);
   hoverProvider = new HoverProvider(fhirPathService, fhirPathContextService, undefined);
-  logger.info('Initial providers created', { operation: 'createInitialProviders' });
+  logger.info('Initial providers created');
 
   // Initialize model provider with enhanced configuration
   await initializeModelProvider();
 
   // Initialize built-in functionality (previously plugins)
   try {
-    logger.info('Initializing built-in functionality...', { operation: 'initializeBuiltins' });
+    logger.info('Initializing built-in functionality...');
     
     // Built-in functionality is always enabled and doesn't need special initialization
-    logger.info('Built-in functionality ready', { operation: 'initializeBuiltins' });
+    logger.info('Built-in functionality ready');
   } catch (error) {
-    logger.error('Failed to initialize built-in functionality', error, { operation: 'initializeBuiltins' });
+    logger.error('Failed to initialize built-in functionality', error);
   }
 
   return {
@@ -674,8 +608,6 @@ connection.onInitialized(async () => {
   
   connection.console.log('FHIRPath Language Server initialized successfully');
 
-  // Track connection for resource monitoring
-  resourceMonitor.trackConnection('connect');
 
   // Initialize workspace symbol provider if workspace folders are available
   try {
@@ -691,28 +623,12 @@ connection.onInitialized(async () => {
 
 // Document change handling
 documents.onDidChangeContent(async (change) => {
-  const context = requestContext.createRequestContext(
-    'document',
-    'contentChanged',
-    change.document.uri
-  );
-  
-  const docLogger = logger.withContext(context);
-  const timer = docLogger.startPerformanceTimer('documentChange');
-
-  docLogger.debug('Document content changed', { 
-    operation: 'contentChanged' 
-  }, {
-    version: change.document.version,
-    contentLength: change.document.getText().length
-  });
+  logger.debug('Document content changed', change.document.uri);
 
   try {
-    await validateTextDocument(change.document, docLogger);
-    timer.end('Document validation completed');
+    await validateTextDocument(change.document);
   } catch (error) {
-    docLogger.error('Document validation failed', error, { operation: 'contentChanged' });
-    timer.end('Document validation failed');
+    logger.error('Document validation failed', error);
     
     errorBoundary.handleError(error as Error, {
       operation: 'document_validation',
@@ -726,35 +642,17 @@ documents.onDidChangeContent(async (change) => {
   if (change.document.uri.endsWith('.fhirpath')) {
     try {
       await workspaceSymbolProvider.handleFileChanged(change.document.uri);
-      docLogger.debug('Workspace symbols updated');
+      logger.debug('Workspace symbols updated');
     } catch (error) {
-      docLogger.error('Error updating workspace symbols', error, { operation: 'updateWorkspaceSymbols' });
+      logger.error('Error updating workspace symbols', error);
     }
   }
-  
-  requestContext.endRequest(context.requestId!);
 });
 
-// Document validation with error boundary
-async function validateTextDocument(textDocument: TextDocument, parentLogger = logger): Promise<void> {
-  const context = requestContext.createDiagnosticContext(
-    textDocument.uri,
-    textDocument.getText().substring(0, 100) + '...', // First 100 chars for context
-    {
-      parsePhase: 'validation'
-    }
-  );
-  
-  const diagnosticLogger = parentLogger.withContext(context);
-  const timer = diagnosticLogger.startPerformanceTimer('validation');
-
+// Document validation
+async function validateTextDocument(textDocument: TextDocument): Promise<void> {
   try {
-    diagnosticLogger.debug('Starting document validation', {
-      parsePhase: 'validation'
-    }, {
-      contentLength: textDocument.getText().length,
-      version: textDocument.version
-    });
+    logger.debug('Starting document validation', textDocument.uri);
 
     const diagnostics = await diagnosticProvider.provideDiagnostics(textDocument);
     
@@ -763,18 +661,9 @@ async function validateTextDocument(textDocument: TextDocument, parentLogger = l
       diagnostics
     });
 
-    diagnosticLogger.info('Document validation completed', {
-      parsePhase: 'validation'
-    }, {
-      diagnosticCount: diagnostics.length,
-      errorCount: diagnostics.filter(d => d.severity === DiagnosticSeverity.Error).length,
-      warningCount: diagnostics.filter(d => d.severity === DiagnosticSeverity.Warning).length
-    });
-    
-    timer.end(`Validation completed with ${diagnostics.length} diagnostics`);
+    logger.info(`Document validation completed with ${diagnostics.length} diagnostics`);
   } catch (error) {
-    diagnosticLogger.error('Diagnostic provider failed', error, { parsePhase: 'validation' });
-    timer.end('Validation failed');
+    logger.error('Diagnostic provider failed', error);
     
     errorBoundary.handleError(error as Error, {
       operation: 'provide_diagnostics',
@@ -821,54 +710,23 @@ connection.onRequest('textDocument/semanticTokens/range', async (params) => {
   }
 });
 
-// Completion provider with error boundary
+// Completion provider
 connection.onCompletion(async (params) => {
-  const context = requestContext.createProviderContext(
-    'completion',
-    'provideCompletions', 
-    params.textDocument.uri,
-    {
-      params: {
-        position: params.position,
-        triggerCharacter: params.context?.triggerCharacter,
-        triggerKind: params.context?.triggerKind
-      }
-    }
-  );
-  
-  const providerLogger = logger.withContext(context);
-  const timer = providerLogger.startPerformanceTimer('completion');
-
   try {
-    providerLogger.debug('Processing completion request', {
-      provider: 'completion',
-      method: 'provideCompletions'
-    }, {
-      position: params.position,
-      triggerCharacter: params.context?.triggerCharacter
-    });
+    logger.debug('Processing completion request', params.textDocument.uri);
 
     const document = documents.get(params.textDocument.uri);
     if (!document) {
-      providerLogger.warn('Document not found for completion');
-      timer.end('Completion failed - document not found');
+      logger.warn('Document not found for completion');
       return [];
     }
 
     const result = await completionProvider.provideCompletions(document, params);
     
-    providerLogger.info('Completion request completed', {
-      provider: 'completion',
-      method: 'provideCompletions'
-    }, {
-      resultCount: result.length
-    });
-    
-    timer.end(`Completion completed with ${result.length} items`);
+    logger.info(`Completion completed with ${result.length} items`);
     return result;
   } catch (error) {
-    providerLogger.error('Completion provider error', error, { provider: 'completion', method: 'provideCompletions' });
-    timer.end('Completion failed with error');
+    logger.error('Completion provider error', error);
     
     errorBoundary.handleError(error as Error, {
       operation: 'provide_completions',
@@ -877,52 +735,20 @@ connection.onCompletion(async (params) => {
       severity: 'low'
     });
     return [];
-  } finally {
-    requestContext.endRequest(context.requestId!);
   }
 });
 
 // Completion resolve handler
 connection.onCompletionResolve(async (item) => {
-  const context = requestContext.createProviderContext(
-    'completion',
-    'resolveCompletionItem', 
-    item.data?.documentUri || 'unknown',
-    {
-      params: {
-        label: item.label,
-        kind: item.kind
-      }
-    }
-  );
-  
-  const providerLogger = logger.withContext(context);
-  const timer = providerLogger.startPerformanceTimer('completion-resolve');
-
   try {
-    providerLogger.debug('Processing completion resolve request', {
-      provider: 'completion',
-      method: 'resolveCompletionItem'
-    }, {
-      label: item.label,
-      kind: item.kind
-    });
+    logger.debug('Processing completion resolve request');
 
     const result = await completionProvider.resolveCompletionItem(item);
     
-    providerLogger.info('Completion resolve request completed', {
-      provider: 'completion',
-      method: 'resolveCompletionItem'
-    });
-    
-    timer.end('Completion resolve completed');
+    logger.info('Completion resolve completed');
     return result;
   } catch (error) {
-    providerLogger.error('Completion resolve provider error', error as Error, { 
-      provider: 'completion', 
-      method: 'resolveCompletionItem' 
-    });
-    timer.end('Completion resolve failed with error');
+    logger.error('Completion resolve provider error', error);
     
     errorBoundary.handleError(error as Error, {
       operation: 'resolve_completion_item',
@@ -931,8 +757,6 @@ connection.onCompletionResolve(async (item) => {
       severity: 'low'
     });
     return item; // Return original item if resolve fails
-  } finally {
-    requestContext.endRequest(context.requestId!);
   }
 });
 
@@ -1195,9 +1019,6 @@ connection.onShutdown(async () => {
   connection.console.log('FHIRPath Language Server shutting down');
 
   try {
-    // Track connection disconnect
-    resourceMonitor.trackConnection('disconnect');
-
     // Graceful shutdown through server manager
     await serverManager.stop();
   } catch (error) {
@@ -1205,39 +1026,10 @@ connection.onShutdown(async () => {
   }
 });
 
-// Start performance optimization services
-async function startPerformanceServices() {
-  try {
-    // Start memory monitoring
-    memoryManager.startMonitoring();
-
-    // Start background processor
-    await backgroundProcessor.start();
-
-    // Setup profiler thresholds
-    profiler.setThreshold('completion', 100);
-    profiler.setThreshold('diagnostic', 200);
-    profiler.setThreshold('hover', 50);
-
-    connection.console.log('Performance optimization services started');
-  } catch (error) {
-    connection.console.error(`Failed to start performance services: ${error}`);
-  }
-}
-
-// Enhanced request handling with throttling
-function setupThrottledHandlers() {
-  // Note: Request throttling is implemented within individual providers
-  // using the AdaptiveRequestThrottler service
-  connection.console.log('Request throttling configured in providers');
-}
 
 // Listen for document events
 documents.listen(connection);
 
-// Setup performance optimization
-startPerformanceServices();
-setupThrottledHandlers();
 
 // Start listening for connections
 connection.listen();
@@ -1279,64 +1071,7 @@ connection.onRequest('fhirpath/resources', () => {
   }
 });
 
-// Add performance metrics endpoint
-connection.onRequest('fhirpath/performance', () => {
-  try {
-    const performanceReport = profiler.getReport();
-    const memoryReport = memoryManager.getMemoryReport();
-    const throttleStatus = requestThrottler.getThrottleStatus();
-    const monitoringStats = performanceMonitor.getStatistics();
-    const monitoringReport = performanceMonitor.getReport();
 
-    logger.debug('Performance metrics requested', {
-      operation: 'getPerformanceMetrics'
-    }, {
-      reportSize: performanceReport.measures.length,
-      monitoringStatsCount: Array.isArray(monitoringStats) ? monitoringStats.length : 1
-    });
-
-    return {
-      performance: performanceReport,
-      monitoring: {
-        statistics: monitoringStats,
-        report: monitoringReport,
-        enabled: performanceMonitor.isEnabled()
-      },
-      memory: memoryReport,
-      throttling: throttleStatus,
-      backgroundTasks: {
-        queueSize: backgroundProcessor.getQueueSize(),
-        activeCount: backgroundProcessor.getActiveTaskCount(),
-        workerCount: backgroundProcessor.getWorkerCount()
-      },
-      correlationContext: correlationContext.getStats(),
-      timestamp: new Date().toISOString()
-    };
-  } catch (error) {
-    logger.error('Failed to generate performance metrics', error, { operation: 'getPerformanceMetrics' });
-    
-    return {
-      error: (error as Error).message,
-      timestamp: new Date().toISOString()
-    };
-  }
-});
-
-// Add workspace optimization endpoint
-connection.onRequest('fhirpath/optimize', async (params: { rootPath: string }) => {
-  try {
-    await workspaceOptimizer.optimizeWorkspace(params.rootPath);
-    return {
-      status: 'optimized',
-      timestamp: new Date().toISOString()
-    };
-  } catch (error) {
-    return {
-      error: (error as Error).message,
-      timestamp: new Date().toISOString()
-    };
-  }
-});
 
 // Inlay hint provider
 connection.onRequest('textDocument/inlayHint', async (params) => {
@@ -1356,14 +1091,14 @@ connection.onRequest('textDocument/inlayHint', async (params) => {
 connection.console.log('FHIRPath Language Server started and listening...');
 
 // Add ModelProvider health endpoint
-connection.onRequest('fhirpath/modelProvider/health', () => {
+connection.onRequest('fhirpath/modelProvider/health', async () => {
   try {
-    return checkModelProviderHealth();
+    return await checkModelProviderHealth();
   } catch (error) {
     return {
       healthy: false,
       error: (error as Error).message,
-      timestamp: new Date().toISOString()
+      timestamp: new Date()
     };
   }
 });
@@ -1377,7 +1112,7 @@ connection.onShutdown(async () => {
     if (modelProviderHealthCheck) {
       clearInterval(modelProviderHealthCheck);
       modelProviderHealthCheck = null;
-      logger.info('ModelProvider health checks stopped', { operation: 'shutdown' });
+      logger.info('ModelProvider health checks stopped');
     }
 
     // Additional cleanup for enhanced services
@@ -1385,9 +1120,9 @@ connection.onShutdown(async () => {
     isModelProviderAvailable = false;
     modelProviderFailures = 0;
 
-    logger.info('ModelProvider cleanup completed', { operation: 'shutdown' });
+    logger.info('ModelProvider cleanup completed');
   } catch (error) {
-    logger.error('Error during ModelProvider cleanup', error as Error, { operation: 'shutdown' });
+    logger.error('Error during ModelProvider cleanup', error);
   }
 
 });

@@ -1,0 +1,29 @@
+// Test file for compact hover functionality
+// @context Patient
+
+// Function hover - should be compact with inline parameters
+Patient.name.where()
+
+// Resource hover - should show key properties inline
+Patient
+
+// Property hover - should show type, constraints, examples inline  
+Patient.birthDate
+
+// Choice type hover - should show choice options compactly
+Patient.multipleBirth
+
+// Complex type hover - should show properties inline
+Patient.name
+
+// Operator hover - should be single line with precedence
+Patient.birthDate < today()
+
+// Boolean function - should show concise info
+Patient.active
+
+// Collection function - should show tips inline
+Patient.identifier.exists()
+
+// Navigation hover - should show type and hierarchy compactly
+Patient.contact.name.family

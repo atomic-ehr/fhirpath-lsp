@@ -63,52 +63,166 @@ export interface NavigationContext {
   parentType?: string;
 }
 
+export interface CompletionProviderConfig {
+  maxSuggestions?: number;
+  includeSnippets?: boolean;
+  includeDocumentation?: boolean;
+  fuzzyMatching?: boolean;
+  sortByRelevance?: boolean;
+  enableTypeHints?: boolean;
+  enableParameterHints?: boolean;
+  enablePreviewText?: boolean;
+  triggerCharacters?: string[];
+  suggestionDelay?: number;
+  enablePostfixSnippets?: boolean;
+  enableFunctionTemplates?: boolean;
+  enableIntelliSenseCache?: boolean;
+  cacheSize?: number;
+  contextAware?: boolean;
+  smartSuggestions?: boolean;
+  includePrivateElements?: boolean;
+  priorityWeighting?: {
+    commonElements?: number;
+    recentlyUsed?: number;
+    typeRelevance?: number;
+  };
+  semanticFiltering?: {
+    filterByScope?: boolean;
+    filterByCardinality?: boolean;
+    filterByContext?: boolean;
+  };
+}
+
 export class CompletionProvider {
   private functionRegistry: FHIRPathFunctionRegistry;
   private contextService?: FHIRPathContextService;
-  private profiler = getGlobalProfiler();
-  private debouncedProvideCompletions: (document: TextDocument, params: CompletionParams) => Promise<CompletionItem[]>;
   private completionCache = new Map<string, { items: CompletionItem[]; timestamp: number; context: string; }>();
   private logger = getLogger('CompletionProvider');
+  private config: CompletionProviderConfig;
+  private recentlyUsedItems = new Map<string, number>(); // Track usage frequency
 
   constructor(
     private fhirPathService: FHIRPathService,
     private modelProviderService?: ModelProviderService,
-    private fhirResourceService?: FHIRResourceService
+    private fhirResourceService?: FHIRResourceService,
+    config?: CompletionProviderConfig
   ) {
     this.functionRegistry = new FHIRPathFunctionRegistry();
     if (fhirResourceService) {
       this.contextService = new FHIRPathContextService(fhirResourceService);
     }
 
+    // Set default configuration with schema-based overrides
+    this.config = {
+      maxSuggestions: 50,
+      includeSnippets: true,
+      includeDocumentation: true,
+      fuzzyMatching: true,
+      sortByRelevance: true,
+      enableTypeHints: true,
+      enableParameterHints: true,
+      enablePreviewText: true,
+      triggerCharacters: ['.', '(', '[', "'", '"'],
+      suggestionDelay: 300,
+      enablePostfixSnippets: true,
+      enableFunctionTemplates: true,
+      enableIntelliSenseCache: true,
+      cacheSize: 1000,
+      contextAware: true,
+      smartSuggestions: true,
+      includePrivateElements: false,
+      priorityWeighting: {
+        commonElements: 3,
+        recentlyUsed: 2,
+        typeRelevance: 5
+      },
+      semanticFiltering: {
+        filterByScope: true,
+        filterByCardinality: true,
+        filterByContext: true
+      },
+      ...config
+    };
+
     if (!this.modelProviderService) {
       this.logger.warn('ModelProviderService not provided. FHIR completions will be limited.');
     } else {
       this.logger.info('Initialized with ModelProviderService for enhanced FHIR completions');
     }
-
-    // Create debounced version of completion method
-    this.debouncedProvideCompletions = this.provideCompletionsInternal.bind(this);
   }
 
   async provideCompletions(
     document: TextDocument,
     params: CompletionParams
   ): Promise<CompletionItem[]> {
-    return this.profiler.profile('completion', async () => {
-      return this.debouncedProvideCompletions(document, params);
-    });
+    return this.provideCompletionsInternal(document, params);
+  }
+
+  /**
+   * Update completion provider configuration
+   */
+  updateConfig(newConfig: Partial<CompletionProviderConfig>): void {
+    this.config = { ...this.config, ...newConfig };
+    
+    // Clear cache if cache settings changed
+    if (newConfig.enableIntelliSenseCache === false || newConfig.cacheSize) {
+      this.completionCache.clear();
+    }
+    
+    this.logger.debug('Updated completion provider configuration', newConfig);
   }
 
   /**
    * Resolve additional details for a completion item
    */
   async resolveCompletionItem(item: CompletionItem): Promise<CompletionItem> {
-    return this.profiler.profile('completion-resolve', async () => {
-      // For now, we return the item as-is since we already provide all details
-      // This can be enhanced later to lazy-load expensive documentation
-      return item;
-    });
+    // Track usage for priority weighting
+    this.trackItemUsage(item.label);
+    
+    // Add documentation if enabled and not already present
+    if (this.config.includeDocumentation && !item.documentation) {
+      item.documentation = await this.loadDocumentationForItem(item);
+    }
+    
+    // Add preview text if enabled
+    if (this.config.enablePreviewText) {
+      item.additionalTextEdits = this.generatePreviewEdits(item);
+    }
+    
+    return item;
+  }
+  
+  /**
+   * Track item usage for smart suggestions
+   */
+  private trackItemUsage(label: string): void {
+    const currentCount = this.recentlyUsedItems.get(label) || 0;
+    this.recentlyUsedItems.set(label, currentCount + 1);
+    
+    // Keep only the most recent items to prevent memory bloat
+    if (this.recentlyUsedItems.size > 1000) {
+      const entries = Array.from(this.recentlyUsedItems.entries())
+        .sort(([, a], [, b]) => b - a)
+        .slice(0, 500);
+      this.recentlyUsedItems.clear();
+      entries.forEach(([key, value]) => this.recentlyUsedItems.set(key, value));
+    }
+  }
+  
+  /**
+   * Load documentation for completion item
+   */
+  private async loadDocumentationForItem(item: CompletionItem): Promise<string | undefined> {
+    // Implementation would load documentation from FHIR specs or model provider
+    return undefined; // Placeholder
+  }
+  
+  /**
+   * Generate preview edits for completion item
+   */
+  private generatePreviewEdits(item: CompletionItem): any[] | undefined {
+    // Implementation would generate helpful edits based on item type
+    return undefined; // Placeholder
   }
 
   private async provideCompletionsInternal(
@@ -139,14 +253,165 @@ export class CompletionProvider {
 
       const completions = await this.getCompletionsForContext(context, document);
 
-      // Cache the result
-      cacheService.setCompletion(cacheKey, completions);
+      // Apply configuration-based filtering and sorting
+      let filteredCompletions = this.applyConfigurationFilters(completions, context);
+      
+      // Apply priority weighting
+      filteredCompletions = this.applyPriorityWeighting(filteredCompletions);
+      
+      // Limit results based on configuration
+      if (this.config.maxSuggestions && filteredCompletions.length > this.config.maxSuggestions) {
+        filteredCompletions = filteredCompletions.slice(0, this.config.maxSuggestions);
+      }
 
-      return completions;
+      // Cache the result if enabled
+      if (this.config.enableIntelliSenseCache) {
+        cacheService.setCompletion(cacheKey, filteredCompletions);
+        
+        // Maintain cache size limit
+        if (this.completionCache.size > (this.config.cacheSize || 1000)) {
+          const oldestKey = this.completionCache.keys().next().value;
+          this.completionCache.delete(oldestKey);
+        }
+      }
+
+      return filteredCompletions;
     } catch (error) {
       this.logger.error('Error providing completions', { error });
       return [];
     }
+  }
+
+  /**
+   * Apply configuration-based filters to completions
+   */
+  private applyConfigurationFilters(completions: CompletionItem[], context: CompletionContext): CompletionItem[] {
+    let filtered = [...completions];
+
+    // Apply semantic filtering if enabled
+    if (this.config.semanticFiltering) {
+      if (this.config.semanticFiltering.filterByScope && context.isAfterDot) {
+        // Filter completions based on scope (e.g., only show relevant properties after dot)
+        filtered = filtered.filter(item => this.isItemRelevantForScope(item, context));
+      }
+
+      if (this.config.semanticFiltering.filterByCardinality) {
+        // Filter based on FHIR element cardinality constraints
+        filtered = filtered.filter(item => this.isItemValidForCardinality(item, context));
+      }
+
+      if (this.config.semanticFiltering.filterByContext) {
+        // Filter based on expression context
+        filtered = filtered.filter(item => this.isItemValidForContext(item, context));
+      }
+    }
+
+    // Filter private elements if not enabled
+    if (!this.config.includePrivateElements) {
+      filtered = filtered.filter(item => !this.isPrivateElement(item));
+    }
+
+    // Apply type hints if enabled
+    if (this.config.enableTypeHints) {
+      filtered = filtered.map(item => this.addTypeHints(item));
+    }
+
+    // Add parameter hints if enabled
+    if (this.config.enableParameterHints && context.isInFunction) {
+      filtered = filtered.map(item => this.addParameterHints(item));
+    }
+
+    return filtered;
+  }
+
+  /**
+   * Apply priority weighting to completion items
+   */
+  private applyPriorityWeighting(completions: CompletionItem[]): CompletionItem[] {
+    if (!this.config.sortByRelevance || !this.config.priorityWeighting) {
+      return completions;
+    }
+
+    const weights = this.config.priorityWeighting;
+    
+    return completions.map(item => {
+      let priority = 0;
+
+      // Common elements weight
+      if (weights.commonElements && this.isCommonElement(item)) {
+        priority += weights.commonElements;
+      }
+
+      // Recently used weight
+      if (weights.recentlyUsed) {
+        const usageCount = this.recentlyUsedItems.get(item.label) || 0;
+        priority += Math.min(usageCount * weights.recentlyUsed, weights.recentlyUsed * 3);
+      }
+
+      // Type relevance weight
+      if (weights.typeRelevance && this.isTypeRelevant(item)) {
+        priority += weights.typeRelevance;
+      }
+
+      // Store priority for sorting
+      (item as any).priority = priority;
+      return item;
+    }).sort((a, b) => ((b as any).priority || 0) - ((a as any).priority || 0));
+  }
+
+  /**
+   * Helper methods for filtering and weighting
+   */
+  private isItemRelevantForScope(item: CompletionItem, context: CompletionContext): boolean {
+    // Implement scope-based filtering logic
+    return true; // Placeholder
+  }
+
+  private isItemValidForCardinality(item: CompletionItem, context: CompletionContext): boolean {
+    // Implement cardinality-based filtering logic
+    return true; // Placeholder
+  }
+
+  private isItemValidForContext(item: CompletionItem, context: CompletionContext): boolean {
+    // Implement context-based filtering logic
+    return true; // Placeholder
+  }
+
+  private isPrivateElement(item: CompletionItem): boolean {
+    // Check if item represents a private/internal FHIR element
+    return item.label.startsWith('_') || item.detail?.includes('(internal)');
+  }
+
+  private addTypeHints(item: CompletionItem): CompletionItem {
+    // Add type information to completion item if available
+    if (item.kind === CompletionItemKind.Property && item.detail) {
+      item.detail = `${item.detail} : ${this.getTypeHint(item)}`;
+    }
+    return item;
+  }
+
+  private addParameterHints(item: CompletionItem): CompletionItem {
+    // Add parameter hints for function completions
+    if (item.kind === CompletionItemKind.Function && this.config.enableFunctionTemplates) {
+      // Implementation would add parameter hints
+    }
+    return item;
+  }
+
+  private isCommonElement(item: CompletionItem): boolean {
+    // Check if this is a commonly used FHIR element
+    const commonElements = ['id', 'identifier', 'status', 'code', 'subject', 'patient', 'value', 'text'];
+    return commonElements.includes(item.label.toLowerCase());
+  }
+
+  private isTypeRelevant(item: CompletionItem): boolean {
+    // Check if item is relevant to current type context
+    return true; // Placeholder
+  }
+
+  private getTypeHint(item: CompletionItem): string {
+    // Extract type hint from item data
+    return (item as any).typeHint || 'unknown';
   }
 
   private analyzeCompletionContext(

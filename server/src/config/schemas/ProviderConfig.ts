@@ -23,11 +23,6 @@ export interface ModelProviderConfig extends BaseConfig {
     ttl: number;
     maxSize: number;
   };
-  performance: {
-    enableOptimizations: boolean;
-    batchSize: number;
-    concurrentRequests: number;
-  };
 }
 
 /**
@@ -92,47 +87,6 @@ export interface RefactoringConfig extends BaseConfig {
   safetyChecks: RefactoringSafetyChecks;
 }
 
-/**
- * Throttling configuration for request types
- */
-export interface ThrottleConfig {
-  requestType: string;
-  limit: number;
-  windowMs: number;
-}
-
-/**
- * Performance configuration for providers
- */
-export interface PerformanceConfig extends BaseConfig {
-  requestThrottling: {
-    enabled: boolean;
-    configs: ThrottleConfig[];
-    adaptiveEnabled: boolean;
-    defaultWindowMs: number;
-  };
-  caching: {
-    enabled: boolean;
-    maxCacheSize: number;
-    ttlMs: number;
-  };
-  timeouts: {
-    completionTimeoutMs: number;
-    diagnosticTimeoutMs: number;
-    hoverTimeoutMs: number;
-  };
-}
-
-/**
- * Cache configuration
- */
-export interface CacheConfig extends BaseConfig {
-  maxSize: number;
-  ttlMs: number;
-  cleanupIntervalMs: number;
-  persistToDisk: boolean;
-  diskCachePath?: string;
-}
 
 /**
  * Completion provider configuration
@@ -201,8 +155,6 @@ export interface ProviderConfig extends BaseConfig {
   enhanced: EnhancedProviderConfig;
   healthCheck: HealthCheckConfig;
   refactoring: RefactoringConfig;
-  performance: PerformanceConfig;
-  cache: CacheConfig;
   completion: CompletionConfig;
   hover: HoverConfig;
   definition: DefinitionConfig;
@@ -232,11 +184,6 @@ export const DEFAULT_PROVIDER_CONFIG: ProviderConfig = {
       ttl: 600000, // 10 minutes
       maxSize: 1000
     },
-    performance: {
-      enableOptimizations: true,
-      batchSize: 50,
-      concurrentRequests: 10
-    }
   },
   enhanced: {
     completion: {
@@ -283,41 +230,6 @@ export const DEFAULT_PROVIDER_CONFIG: ProviderConfig = {
       syntaxCheck: true,
       referenceIntegrity: true
     }
-  },
-  performance: {
-    enabled: true,
-    requestThrottling: {
-      enabled: true,
-      configs: [
-        { requestType: 'completion', limit: 10, windowMs: 1000 },
-        { requestType: 'diagnostic', limit: 5, windowMs: 1000 },
-        { requestType: 'hover', limit: 20, windowMs: 1000 },
-        { requestType: 'definition', limit: 10, windowMs: 1000 },
-        { requestType: 'references', limit: 5, windowMs: 1000 },
-        { requestType: 'semanticTokens', limit: 3, windowMs: 1000 },
-        { requestType: 'documentSymbol', limit: 5, windowMs: 1000 },
-        { requestType: 'codeAction', limit: 10, windowMs: 1000 }
-      ],
-      adaptiveEnabled: true,
-      defaultWindowMs: 1000
-    },
-    caching: {
-      enabled: true,
-      maxCacheSize: 1000,
-      ttlMs: 300000 // 5 minutes
-    },
-    timeouts: {
-      completionTimeoutMs: 5000,
-      diagnosticTimeoutMs: 10000,
-      hoverTimeoutMs: 3000
-    }
-  },
-  cache: {
-    enabled: true,
-    maxSize: 1000,
-    ttlMs: 300000,
-    cleanupIntervalMs: 60000,
-    persistToDisk: false
   },
   completion: {
     enabled: true,
@@ -402,14 +314,6 @@ export const PROVIDER_CONFIG_SCHEMA = {
             maxSize: { type: 'number', minimum: 100, maximum: 10000, default: 1000 }
           }
         },
-        performance: {
-          type: 'object',
-          properties: {
-            enableOptimizations: { type: 'boolean', default: true },
-            batchSize: { type: 'number', minimum: 10, maximum: 1000, default: 50 },
-            concurrentRequests: { type: 'number', minimum: 1, maximum: 50, default: 10 }
-          }
-        }
       }
     },
     enhanced: {
@@ -474,28 +378,6 @@ export const PROVIDER_CONFIG_SCHEMA = {
         maxPreviewChanges: { type: 'number', minimum: 1, maximum: 1000, default: 100 }
       }
     },
-    performance: {
-      type: 'object',
-      properties: {
-        enabled: { type: 'boolean', default: true },
-        requestThrottling: {
-          type: 'object',
-          properties: {
-            enabled: { type: 'boolean', default: true },
-            adaptiveEnabled: { type: 'boolean', default: true },
-            defaultWindowMs: { type: 'number', minimum: 100, maximum: 10000, default: 1000 }
-          }
-        }
-      }
-    },
-    cache: {
-      type: 'object',
-      properties: {
-        enabled: { type: 'boolean', default: true },
-        maxSize: { type: 'number', minimum: 10, maximum: 10000, default: 1000 },
-        ttlMs: { type: 'number', minimum: 1000, maximum: 3600000, default: 300000 }
-      }
-    }
   }
 };
 

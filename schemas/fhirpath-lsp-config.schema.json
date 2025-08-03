@@ -276,31 +276,38 @@
               },
               "additionalProperties": false
             },
-            "performance": {
-              "type": "object",
-              "description": "Model provider performance settings",
-              "properties": {
-                "enableOptimizations": {
-                  "type": "boolean",
-                  "default": true,
-                  "description": "Enable performance optimizations"
-                },
-                "batchSize": {
-                  "type": "number",
-                  "minimum": 10,
-                  "maximum": 1000,
-                  "default": 50,
-                  "description": "Batch size for operations"
-                },
-                "concurrentRequests": {
-                  "type": "number",
-                  "minimum": 1,
-                  "maximum": 50,
-                  "default": 10,
-                  "description": "Maximum concurrent requests"
-                }
-              },
-              "additionalProperties": false
+          },
+          "additionalProperties": false
+        },
+        "healthCheck": {
+          "type": "object",
+          "description": "Health check configuration",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": true,
+              "description": "Enable health checks"
+            },
+            "intervalMs": {
+              "type": "number",
+              "minimum": 30000,
+              "maximum": 300000,
+              "default": 60000,
+              "description": "Health check interval in milliseconds"
+            },
+            "timeoutMs": {
+              "type": "number",
+              "minimum": 1000,
+              "maximum": 30000,
+              "default": 5000,
+              "description": "Health check timeout in milliseconds"
+            },
+            "maxFailures": {
+              "type": "number",
+              "minimum": 1,
+              "maximum": 10,
+              "default": 3,
+              "description": "Maximum health check failures before marking as unhealthy"
             }
           },
           "additionalProperties": false
@@ -344,6 +351,49 @@
                   "maximum": 500,
                   "default": 100,
                   "description": "Maximum number of completions"
+                },
+                "contextAware": {
+                  "type": "boolean",
+                  "default": true,
+                  "description": "Enable context-aware completions based on resource type"
+                },
+                "smartSuggestions": {
+                  "type": "boolean",
+                  "default": true,
+                  "description": "Enable smart completion suggestions"
+                },
+                "includePrivateElements": {
+                  "type": "boolean",
+                  "default": false,
+                  "description": "Include private/internal FHIR elements in completions"
+                },
+                "priorityWeighting": {
+                  "type": "object",
+                  "description": "Completion priority weighting factors",
+                  "properties": {
+                    "commonElements": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 10,
+                      "default": 3,
+                      "description": "Weight for commonly used elements"
+                    },
+                    "recentlyUsed": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 10,
+                      "default": 2,
+                      "description": "Weight for recently used elements"
+                    },
+                    "typeRelevance": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 10,
+                      "default": 5,
+                      "description": "Weight for type relevance"
+                    }
+                  },
+                  "additionalProperties": false
                 }
               },
               "additionalProperties": false
@@ -413,6 +463,50 @@
                 }
               },
               "additionalProperties": false
+            },
+            "refactoring": {
+              "type": "object",
+              "description": "Enhanced refactoring settings",
+              "properties": {
+                "enabled": {
+                  "type": "boolean",
+                  "default": true,
+                  "description": "Enable enhanced refactoring"
+                },
+                "smart": {
+                  "type": "boolean",
+                  "default": true,
+                  "description": "Enable smart refactoring suggestions"
+                },
+                "enableOptimizations": {
+                  "type": "boolean",
+                  "default": true,
+                  "description": "Enable expression optimization suggestions"
+                }
+              },
+              "additionalProperties": false
+            },
+            "semanticFiltering": {
+              "type": "object",
+              "description": "Semantic filtering options for completions",
+              "properties": {
+                "filterByScope": {
+                  "type": "boolean",
+                  "default": true,
+                  "description": "Filter completions based on current scope"
+                },
+                "filterByCardinality": {
+                  "type": "boolean",
+                  "default": true,
+                  "description": "Filter completions based on element cardinality"
+                },
+                "filterByContext": {
+                  "type": "boolean",
+                  "default": true,
+                  "description": "Filter completions based on expression context"
+                }
+              },
+              "additionalProperties": false
             }
           },
           "additionalProperties": false
@@ -452,6 +546,64 @@
               "type": "boolean",
               "default": true,
               "description": "Sort completions by relevance"
+            },
+            "triggerCharacters": {
+              "type": "array",
+              "description": "Characters that trigger completion",
+              "items": {
+                "type": "string",
+                "maxLength": 1
+              },
+              "default": [".", "(", "[", "'", "\""]
+            },
+            "suggestionDelay": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 2000,
+              "default": 300,
+              "description": "Delay before showing suggestions in milliseconds"
+            },
+            "enablePostfixSnippets": {
+              "type": "boolean",
+              "default": true,
+              "description": "Enable postfix snippet completions (e.g., .where, .select)"
+            },
+            "enableFunctionTemplates": {
+              "type": "boolean",
+              "default": true,
+              "description": "Enable function template completions with parameter hints"
+            },
+            "enableTypeHints": {
+              "type": "boolean",
+              "default": true,
+              "description": "Show type hints in completion items"
+            },
+            "enableParameterHints": {
+              "type": "boolean",
+              "default": true,
+              "description": "Show parameter hints for functions"
+            },
+            "enablePreviewText": {
+              "type": "boolean",
+              "default": true,
+              "description": "Show preview text for complex completions"
+            },
+            "autoImportSuggestions": {
+              "type": "boolean",
+              "default": true,
+              "description": "Enable auto-import suggestions for external resources"
+            },
+            "enableIntelliSenseCache": {
+              "type": "boolean",
+              "default": true,
+              "description": "Enable IntelliSense caching for better performance"
+            },
+            "cacheSize": {
+              "type": "number",
+              "minimum": 100,
+              "maximum": 5000,
+              "default": 1000,
+              "description": "IntelliSense cache size"
             }
           },
           "additionalProperties": false
@@ -490,92 +642,73 @@
           },
           "additionalProperties": false
         },
-        "performance": {
+      },
+      "additionalProperties": false
+    },
+    "logging": {
+      "type": "object",
+      "description": "Logging configuration",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable logging"
+        },
+        "level": {
+          "type": "string",
+          "enum": ["error", "warn", "info", "debug"],
+          "default": "info",
+          "description": "Logging level"
+        },
+        "console": {
           "type": "object",
-          "description": "Performance settings",
+          "description": "Console logging settings",
           "properties": {
             "enabled": {
               "type": "boolean",
               "default": true,
-              "description": "Enable performance optimizations"
+              "description": "Enable console logging"
             },
-            "requestThrottling": {
-              "type": "object",
-              "description": "Request throttling settings",
-              "properties": {
-                "enabled": {
-                  "type": "boolean",
-                  "default": true,
-                  "description": "Enable request throttling"
-                },
-                "adaptiveEnabled": {
-                  "type": "boolean",
-                  "default": true,
-                  "description": "Enable adaptive throttling"
-                },
-                "defaultWindowMs": {
-                  "type": "number",
-                  "minimum": 100,
-                  "maximum": 10000,
-                  "default": 1000,
-                  "description": "Default throttling window in milliseconds"
-                }
-              },
-              "additionalProperties": false
+            "colorize": {
+              "type": "boolean",
+              "default": false,
+              "description": "Enable colorized console output"
             },
-            "caching": {
-              "type": "object",
-              "description": "Performance caching settings",
-              "properties": {
-                "enabled": {
-                  "type": "boolean",
-                  "default": true,
-                  "description": "Enable caching"
-                },
-                "maxCacheSize": {
-                  "type": "number",
-                  "minimum": 10,
-                  "maximum": 10000,
-                  "default": 1000,
-                  "description": "Maximum cache size"
-                },
-                "ttlMs": {
-                  "type": "number",
-                  "minimum": 1000,
-                  "maximum": 3600000,
-                  "default": 300000,
-                  "description": "Cache time-to-live in milliseconds"
-                }
-              },
-              "additionalProperties": false
+            "includeTimestamp": {
+              "type": "boolean",
+              "default": true,
+              "description": "Include timestamp in console logs"
+            }
+          },
+          "additionalProperties": false
+        },
+        "file": {
+          "type": "object",
+          "description": "File logging settings",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": false,
+              "description": "Enable file logging"
             },
-            "timeouts": {
-              "type": "object",
-              "description": "Request timeout settings",
-              "properties": {
-                "completionTimeoutMs": {
-                  "type": "number",
-                  "minimum": 1000,
-                  "maximum": 30000,
-                  "default": 5000,
-                  "description": "Completion request timeout"
-                },
-                "diagnosticTimeoutMs": {
-                  "type": "number",
-                  "minimum": 1000,
-                  "maximum": 60000,
-                  "default": 10000,
-                  "description": "Diagnostic request timeout"
-                },
-                "hoverTimeoutMs": {
-                  "type": "number",
-                  "minimum": 1000,
-                  "maximum": 10000,
-                  "default": 3000,
-                  "description": "Hover request timeout"
-                }
-              },
-              "additionalProperties": false
+            "path": {
+              "type": "string",
+              "default": "./logs/fhirpath-lsp.log",
+              "description": "Log file path"
+            },
+            "maxSize": {
+              "type": "number",
+              "minimum": 1024,
+              "maximum": 104857600,
+              "default": 10485760,
+              "description": "Maximum log file size in bytes (1KB to 100MB)"
+            },
+            "maxFiles": {
+              "type": "number",
+              "minimum": 1,
+              "maximum": 50,
+              "default": 5,
+              "description": "Maximum number of log files to keep"
             }
           },
           "additionalProperties": false

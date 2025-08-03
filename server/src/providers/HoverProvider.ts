@@ -268,20 +268,23 @@ export class HoverProvider {
       return this.createHoverFromJSDoc(func);
     }
     
-    // Fallback to old format
-    let content = `\`${func.signature}\` → \`${func.returnType}\`\\n\\n`;
-    content += `${func.description}\\n`;
+    // Compact function format
+    let content = `**${func.signature}** → \`${func.returnType}\`\n`;
+    content += `${func.description}`;
     
     if (func.parameters && func.parameters.length > 0) {
-      content += '\\n**Parameters:**\\n';
-      func.parameters.forEach(param => {
-        if (!param) return;
-        const optional = param.optional ? ' *(optional)*' : '';
-        const name = param.name || 'unknown';
-        const type = param.type || 'any';
-        const shortType = this.shortenType(type);
-        content += `• \`${name}\` \`${shortType}\`${optional}\\n`;
-      });
+      content += '\n\n**Parameters:** ';
+      const paramList = func.parameters
+        .filter(param => param)
+        .map(param => {
+          const optional = param.optional ? '?' : '';
+          const name = param.name || 'unknown';
+          const type = param.type || 'any';
+          const shortType = this.shortenType(type);
+          return `\`${name}${optional}\`: \`${shortType}\``;
+        })
+        .join(', ');
+      content += paramList;
     }
 
     return {
@@ -293,26 +296,22 @@ export class HoverProvider {
   private createHoverFromJSDoc(func: FHIRPathFunction): MarkupContent {
     const parsed = this.parseJSDoc(func.description);
     
-    // Build clean format: signature → returnType
-    let content = `\`${func.signature}\` → \`${func.returnType}\`\\n\\n`;
+    // Compact format: signature → returnType
+    let content = `**${func.signature}** → \`${func.returnType}\`\n`;
+    content += `${parsed.description}`;
     
-    // Description
-    content += `${parsed.description}\\n`;
-    
-    // Parameters
+    // Inline parameters
     if (parsed.params.length > 0) {
-      content += '\\n**Parameters:**\\n';
-      parsed.params.forEach(param => {
-        content += `• \`${param.name}\` \`${this.shortenType(param.type || 'any')}\`${param.optional ? ' *(optional)*' : ''}\\n`;
-      });
+      content += '\n\n**Parameters:** ';
+      const paramList = parsed.params
+        .map(param => `\`${param.name}${param.optional ? '?' : ''}\`: \`${this.shortenType(param.type || 'any')}\``)
+        .join(', ');
+      content += paramList;
     }
     
-    // Examples
+    // Inline examples
     if (parsed.examples.length > 0) {
-      content += '\\n**Examples:**\\n';
-      parsed.examples.forEach(example => {
-        content += `\`${example}\`\\n`;
-      });
+      content += '\n\n**Examples:** ' + parsed.examples.map(ex => `\`${ex}\``).join(', ');
     }
 
     return {
@@ -387,21 +386,14 @@ export class HoverProvider {
   }
 
   private createOperatorHover(operator: FHIRPathOperator): MarkupContent {
-    // Clean operator header
-    let content = `\`${operator.symbol}\` **${operator.name}**\\n\\n`;
+    // Compact operator format
+    let content = `**${operator.symbol}** *${operator.name}* | Precedence: ${operator.precedence}\n`;
+    content += `${operator.description}`;
     
-    // Description
-    content += `${operator.description}\\n`;
-    
-    // Compact precedence and associativity info
-    content += `\\n*Precedence: ${operator.precedence}, ${operator.associativity} associative*\\n`;
-    
-    // Examples (more compact)
+    // Compact examples
     if (operator.examples.length > 0) {
-      content += '\\n**Examples:**\\n';
-      operator.examples.slice(0, 2).forEach(example => {
-        content += `\`${example}\`\\n`;
-      });
+      const exampleList = operator.examples.slice(0, 2).map(ex => `\`${ex}\``).join(', ');
+      content += `\n\n**Examples:** ${exampleList}`;
     }
 
     return {
@@ -429,14 +421,12 @@ export class HoverProvider {
   }
 
   private createKeywordHover(keyword: any): MarkupContent {
-    let content = `**${keyword.keyword}** *(keyword)*\\n\\n`;
-    content += `${keyword.description}\\n\\n`;
+    let content = `**${keyword.keyword}** *(keyword)*\n`;
+    content += `${keyword.description}`;
     
     if (keyword.examples.length > 0) {
-      content += '**Examples:**\\n';
-      keyword.examples.forEach((example: string) => {
-        content += `\`\`\`fhirpath\\n${example}\\n\`\`\`\\n`;
-      });
+      const exampleList = keyword.examples.map((ex: string) => `\`${ex}\``).join(', ');
+      content += `\n\n**Examples:** ${exampleList}`;
     }
 
     return {
@@ -449,40 +439,35 @@ export class HoverProvider {
     // Get resource information from model provider
     const properties = this.fhirPathService.getResourcePropertyDetails(resourceType);
     
-    let content = `### 🔷 ${resourceType}\\n`;
-    content += `<sub>**FHIR Resource** • R4 • Normative</sub>\\n\\n`;
-    content += `<sub>FHIR ${resourceType} resource type. Access properties using dot notation.</sub>\\n\\n`;
+    let content = `**🔷 ${resourceType}** *FHIR Resource*\n`;
     
     if (properties && properties.length > 0) {
-      // Show only top 3-4 most important properties in collapsed format
-      const keyProps = properties.slice(0, 4);
-      content += `<details>\\n<summary><sub>📝 <strong>Key Properties</strong> (${properties.length} total)</sub></summary>\\n\\n`;
+      // Show key properties inline
+      const keyProps = properties.slice(0, 3);
+      const propList = keyProps
+        .filter(prop => prop)
+        .map(prop => {
+          const badge = this.getCompactTypeBadge(prop.type);
+          return `\`${prop.name || 'unknown'}\`${badge}`;
+        })
+        .join(', ');
       
-      keyProps.forEach((prop: any) => {
-        if (!prop) return; // Skip if prop is undefined
-        const badge = this.getCompactTypeBadge(prop.type);
-        const reqBadge = prop.required ? '⚠️' : '';
-        const description = prop.description || 'No description available';
-        content += `<sub>• **\`${prop.name || 'unknown'}\`** ${badge}${reqBadge} — ${this.truncateText(description, 60)}</sub>\\n`;
-      });
-      
-      if (properties.length > 4) {
-        content += `<sub>• <em>...and ${properties.length - 4} more</em></sub>\\n`;
+      if (propList) {
+        content += `\n**Key Properties:** ${propList}`;
+        if (properties.length > 3) {
+          content += ` *(+${properties.length - 3} more)*`;
+        }
       }
-      content += `\\n</details>\\n\\n`;
     }
 
-    // Add common examples
+    // Add compact examples
     const examples = this.getResourceExamples(resourceType);
     if (examples.length > 0) {
-      content += `<details>\\n<summary><sub>💡 <strong>FHIRPath Examples</strong></sub></summary>\\n\\n`;
-      examples.forEach((example: string) => {
-        content += `<sub>\`${example}\`</sub>\\n`;
-      });
-      content += `\\n</details>\\n\\n`;
+      const exampleList = examples.slice(0, 2).map(ex => `\`${ex}\``).join(', ');
+      content += `\n\n**Examples:** ${exampleList}`;
     }
 
-    content += `<sub>📚 [Specification](https://hl7.org/fhir/R4/${resourceType.toLowerCase()}.html)</sub>`;
+    content += `\n\n[📚 Specification](https://hl7.org/fhir/R4/${resourceType.toLowerCase()}.html)`;
 
     return {
       kind: MarkupKind.Markdown,
@@ -518,45 +503,36 @@ export class HoverProvider {
   private createFHIRPropertyHover(propertyName: string, resourceType: string): MarkupContent {
     const propertyInfo = this.getFHIRPropertyInfo(propertyName, resourceType);
     
-    let content = `### 📋 ${resourceType}.${propertyName}\\n`;
+    let content = `**📋 ${resourceType}.${propertyName}**\n`;
     
-    // Compact property badge and basic info
+    // Compact property info on one line
     const typeBadge = this.getCompactTypeBadge(propertyInfo.type);
-    const requiredBadge = propertyInfo.required ? '⚠️' : '✨';
+    const requiredBadge = propertyInfo.required ? '⚠️' : '';
     const cardinalityBadge = propertyInfo.cardinality ? ` \`${propertyInfo.cardinality}\`` : '';
     
-    content += `<sub>${requiredBadge} ${typeBadge}${cardinalityBadge}</sub>\\n\\n`;
-    content += `<sub>${propertyInfo.description}</sub>\\n\\n`;
+    content += `${typeBadge}${requiredBadge}${cardinalityBadge} — ${propertyInfo.description}`;
     
-    // Compact constraints in collapsible section
+    // Inline constraints
     if (propertyInfo.constraints && propertyInfo.constraints.length > 0) {
-      content += `<details>\\n<summary><sub>🔒 <strong>Constraints</strong></sub></summary>\\n\\n`;
-      propertyInfo.constraints.forEach((constraint: string) => {
-        content += `<sub>• ${constraint}</sub>\\n`;
-      });
-      content += `\\n</details>\\n\\n`;
+      const constraintList = propertyInfo.constraints.slice(0, 2).join(', ');
+      content += `\n\n**Constraints:** ${constraintList}`;
     }
     
-    // Compact binding information
+    // Inline binding
     if (propertyInfo.binding) {
-      content += `<details>\\n<summary><sub>🏷️ <strong>Value Set</strong> (${propertyInfo.binding.strength})</sub></summary>\\n\\n`;
+      content += `\n\n**Binding:** ${propertyInfo.binding.strength}`;
       if (propertyInfo.binding.valueSet) {
-        content += `<sub>[${propertyInfo.binding.name || 'View ValueSet'}](${propertyInfo.binding.valueSet})</sub>\\n`;
+        content += ` ([ValueSet](${propertyInfo.binding.valueSet}))`;
       }
-      content += `\\n</details>\\n\\n`;
     }
     
-    // Compact examples
+    // Inline examples
     if (propertyInfo.examples && propertyInfo.examples.length > 0) {
-      content += `<details>\\n<summary><sub>💡 <strong>Examples</strong></sub></summary>\\n\\n`;
-      const topExamples = propertyInfo.examples.slice(0, 3);
-      topExamples.forEach((example: string) => {
-        content += `<sub>\`${example}\`</sub>\\n`;
-      });
-      content += `\\n</details>\\n\\n`;
+      const exampleList = propertyInfo.examples.slice(0, 2).map(ex => `\`${ex}\``).join(', ');
+      content += `\n\n**Examples:** ${exampleList}`;
     }
 
-    content += `<sub>📚 [Specification](https://hl7.org/fhir/R4/${resourceType.toLowerCase()}.html#${propertyName})</sub>`;
+    content += `\n\n[📚 Specification](https://hl7.org/fhir/R4/${resourceType.toLowerCase()}.html#${propertyName})`;
 
     return {
       kind: MarkupKind.Markdown,
@@ -636,7 +612,7 @@ export class HoverProvider {
   }
 
   private createGenericPropertyHover(propertyName: string): MarkupContent {
-    const content = `**${propertyName}** *(property)*\\n\\nFHIR resource property. Use with appropriate resource context.`;
+    const content = `**${propertyName}** *(property)* — FHIR resource property`;
 
     return {
       kind: MarkupKind.Markdown,
@@ -879,32 +855,23 @@ export class HoverProvider {
   ): MarkupContent {
     const typeStr = String(typeInfo.type);
     const cardinality = typeInfo.singleton ? '' : '[]';
-    const contextStr = resourceType ? ` (in ${resourceType} context)` : '';
+    const contextStr = resourceType ? ` *in ${resourceType}*` : '';
     
-    let content = `### 🔍 Expression Analysis\n\n`;
-    content += `**Expression:** \`${expression}\`\n\n`;
-    content += `**Type:** \`${typeStr}${cardinality}\`${contextStr}\n\n`;
+    let content = `**🔍 ${expression}** → \`${typeStr}${cardinality}\`${contextStr}\n`;
     
     // Add description if available
     if ((typeInfo as any).description) {
-      content += `**Description:** ${(typeInfo as any).description}\n\n`;
+      content += `${(typeInfo as any).description}\n`;
     }
 
-    // Add cardinality information
-    if (typeInfo.singleton) {
-      content += `**Cardinality:** Single value (0..1)\n\n`;
-    } else {
-      content += `**Cardinality:** Collection (0..*)\n\n`;
-    }
+    // Add compact cardinality
+    const cardinalityText = typeInfo.singleton ? 'Single value' : 'Collection';
+    content += `\n**Type:** ${cardinalityText}`;
 
-    // Add type-specific suggestions
+    // Add type-specific suggestions inline
     const suggestions = this.getTypeSuggestions(typeStr, typeInfo.singleton ?? false);
     if (suggestions.length > 0) {
-      content += `**💡 Suggestions:**\n`;
-      suggestions.forEach(suggestion => {
-        content += `• ${suggestion}\n`;
-      });
-      content += `\n`;
+      content += `\n\n**💡 Tips:** ${suggestions.slice(0, 2).join(', ')}`;
     }
 
     return {
@@ -921,28 +888,25 @@ export class HoverProvider {
     analysis: any,
     resourceType?: string
   ): MarkupContent {
-    let content = `### 🔍 Expression Analysis\n\n`;
-    content += `**Expression:** \`${expression}\`\n\n`;
+    let content = `**🔍 ${expression}**`;
     
     if (resourceType) {
-      content += `**Context:** ${resourceType}\n\n`;
+      content += ` *in ${resourceType}*`;
     }
+    content += '\n';
 
     // Add AST information if available
     if (analysis.ast) {
       const nodeType = analysis.ast.type || 'Expression';
-      content += `**AST Node:** ${nodeType}\n\n`;
+      content += `**Node:** ${nodeType}`;
     }
 
-    // Add any warnings or suggestions
+    // Add compact warnings
     if (analysis.diagnostics && analysis.diagnostics.length > 0) {
       const warnings = analysis.diagnostics.filter((d: any) => d.severity === 2);
       if (warnings.length > 0) {
-        content += `**⚠️ Warnings:**\n`;
-        warnings.forEach((warning: any) => {
-          content += `• ${warning.message}\n`;
-        });
-        content += `\n`;
+        const warningList = warnings.map((w: any) => w.message).join(', ');
+        content += `\n\n**⚠️ Warning:** ${warningList}`;
       }
     }
 
@@ -1099,65 +1063,47 @@ export class HoverProvider {
   ): MarkupContent {
     const fullPath = context.fullPath || context.resourceType;
     
-    let content = `### 🔷 ${fullPath}\n`;
-    content += `<sub>**Type:** ${typeInfo.name}</sub>\n\n`;
+    let content = `**🔷 ${fullPath}** *${typeInfo.name}*\n`;
     
-    // Add type hierarchy
-    if (enhanced?.hierarchy && enhanced.hierarchy.length > 1) {
-      const hierarchy = enhanced.hierarchy.map(t => t.type.name).join(' → ');
-      content += `<details>\n<summary><sub>📊 **Type Hierarchy**</sub></summary>\n\n`;
-      content += `<sub>${hierarchy}</sub>\n\n</details>\n\n`;
-    }
-    
-    // Add constraints
+    // Inline constraints
     if (enhanced?.constraints) {
-      content += `<details>\n<summary><sub>⚖️ **Constraints**</sub></summary>\n\n`;
-      content += `<sub>**Cardinality:** ${enhanced.constraints.cardinality}</sub>\n`;
-      if (enhanced.constraints.required) {
-        content += `<sub>⚠️ **Required Property**</sub>\n`;
-      }
-      if (enhanced.constraints.minLength !== undefined) {
-        content += `<sub>**Min Length:** ${enhanced.constraints.minLength}</sub>\n`;
-      }
-      if (enhanced.constraints.maxLength !== undefined) {
-        content += `<sub>**Max Length:** ${enhanced.constraints.maxLength}</sub>\n`;
-      }
-      content += `\n</details>\n\n`;
+      const constraintParts = [`\`${enhanced.constraints.cardinality}\``];
+      if (enhanced.constraints.required) constraintParts.push('⚠️ Required');
+      if (enhanced.constraints.minLength !== undefined) constraintParts.push(`min:${enhanced.constraints.minLength}`);
+      if (enhanced.constraints.maxLength !== undefined) constraintParts.push(`max:${enhanced.constraints.maxLength}`);
+      content += `**Constraints:** ${constraintParts.join(', ')}\n`;
     }
     
-    // Add choice types
+    // Inline choice types
     if (enhanced?.choiceTypes && enhanced.choiceTypes.length > 1) {
-      content += `<details>\n<summary><sub>🔀 **Choice Types** (${enhanced.choiceTypes.length} options)</sub></summary>\n\n`;
-      enhanced.choiceTypes.forEach(choice => {
-        const choiceName = this.formatChoicePropertyName(context.propertyPath, choice.type.name);
-        content += `<sub>• **${choiceName}** (${choice.type.name})</sub>\n`;
-      });
-      content += `\n</details>\n\n`;
+      const choices = enhanced.choiceTypes
+        .slice(0, 3)
+        .map(choice => {
+          const choiceName = this.formatChoicePropertyName(context.propertyPath, choice.type.name);
+          return `\`${choiceName}\``;
+        })
+        .join(', ');
+      content += `\n**Choice Types:** ${choices}`;
+      if (enhanced.choiceTypes.length > 3) {
+        content += ` *(+${enhanced.choiceTypes.length - 3} more)*`;
+      }
     }
     
-    // Add terminology binding
+    // Inline terminology
     if (enhanced?.terminology) {
-      content += `<details>\n<summary><sub>📚 **Terminology Binding**</sub></summary>\n\n`;
-      content += `<sub>**Strength:** ${enhanced.terminology.strength}</sub>\n`;
+      content += `\n\n**Binding:** ${enhanced.terminology.strength}`;
       if (enhanced.terminology.valueSet) {
-        content += `<sub>**ValueSet:** [${enhanced.terminology.valueSet}](${enhanced.terminology.valueSet})</sub>\n`;
-      }
-      if (enhanced.terminology.description) {
-        content += `<sub>**Description:** ${enhanced.terminology.description}</sub>\n`;
-      }
-      content += `\n</details>\n\n`;
-    }
-    
-    // Add inheritance information
-    if (context.propertyPath.length > 0 && enhanced?.hierarchy) {
-      const propertySource = this.findPropertySource(context.propertyPath, enhanced.hierarchy);
-      if (propertySource) {
-        content += `<sub>🧬 **Inherited from:** ${propertySource}</sub>\n\n`;
+        content += ` ([ValueSet](${enhanced.terminology.valueSet}))`;
       }
     }
     
-    // Add FHIR specification link
-    content += `<sub>📖 [FHIR Specification](https://hl7.org/fhir/R4/${typeInfo.name.toLowerCase()}.html)</sub>`;
+    // Compact hierarchy
+    if (enhanced?.hierarchy && enhanced.hierarchy.length > 1) {
+      const hierarchy = enhanced.hierarchy.map(t => t.type.name).slice(-2).join(' → ');
+      content += `\n\n**Hierarchy:** ${hierarchy}`;
+    }
+    
+    content += `\n\n[📖 Specification](https://hl7.org/fhir/R4/${typeInfo.name.toLowerCase()}.html)`;
     
     return {
       kind: MarkupKind.Markdown,
@@ -1207,28 +1153,37 @@ export class HoverProvider {
     typeInfo: TypeInfo
   ): Promise<MarkupContent> {
     const choiceType = this.extractChoiceType(choiceProperty);
-    const baseType = typeInfo.name;
     
-    let content = `### 🔀 ${choiceProperty}\n`;
-    content += `<sub>**Choice Type:** ${choiceType} (from ${baseProperty}[x])</sub>\n\n`;
+    let content = `**🔀 ${choiceProperty}** *Choice from ${baseProperty}[x]*\n`;
+    content += `**Type:** \`${choiceType}\``;
     
-    // Show all available choice types if ModelProviderService is available
+    // Show other choice types inline
     if (this.modelProviderService) {
       const choiceTypes = await this.modelProviderService.resolveChoiceTypes(typeInfo);
       if (choiceTypes.length > 1) {
-        content += `<details>\n<summary><sub>**Other Available Choices**</sub></summary>\n\n`;
-        choiceTypes.forEach(choice => {
-          if (choice.type.name !== choiceType) {
+        const otherChoices = choiceTypes
+          .filter(choice => choice.type.name !== choiceType)
+          .slice(0, 3)
+          .map(choice => {
             const altProperty = this.formatChoicePropertyName([baseProperty], choice.type.name);
-            content += `<sub>• **${altProperty}** (${choice.type.name})</sub>\n`;
+            return `\`${altProperty}\``;
+          })
+          .join(', ');
+        
+        if (otherChoices) {
+          content += `\n\n**Other Choices:** ${otherChoices}`;
+          if (choiceTypes.length > 4) {
+            content += ` *(+${choiceTypes.length - 4} more)*`;
           }
-        });
-        content += `\n</details>\n\n`;
+        }
       }
     }
     
-    // Add type-specific information
-    content += this.addTypeSpecificInfo(choiceType);
+    // Add compact type-specific info
+    const compactInfo = this.getCompactTypeInfo(choiceType);
+    if (compactInfo) {
+      content += `\n\n${compactInfo}`;
+    }
     
     return {
       kind: MarkupKind.Markdown,
@@ -1251,43 +1206,18 @@ export class HoverProvider {
   /**
    * Add type-specific information for common FHIR types
    */
-  private addTypeSpecificInfo(typeName: string): string {
-    let content = '';
+  private getCompactTypeInfo(typeName: string): string | null {
+    const typeInfoMap: Record<string, string> = {
+      'Quantity': '**Properties:** \`value\`, \`unit\`, \`system\`, \`code\`',
+      'CodeableConcept': '**Properties:** \`coding[]\`, \`text\`',
+      'Reference': '**Properties:** \`reference\`, \`type\`, \`identifier\`, \`display\`',
+      'Period': '**Properties:** \`start\`, \`end\`',
+      'HumanName': '**Properties:** \`family\`, \`given[]\`, \`use\`, \`period\`',
+      'Address': '**Properties:** \`line[]\`, \`city\`, \`state\`, \`postalCode\`, \`country\`',
+      'ContactPoint': '**Properties:** \`system\`, \`value\`, \`use\`, \`rank\`',
+      'Identifier': '**Properties:** \`system\`, \`value\`, \`use\`, \`type\`'
+    };
     
-    switch (typeName) {
-      case 'Quantity':
-        content += `<details>\n<summary><sub>📏 **Quantity Properties**</sub></summary>\n\n`;
-        content += `<sub>• **value** (decimal) - Numerical value</sub>\n`;
-        content += `<sub>• **unit** (string) - Unit representation</sub>\n`;
-        content += `<sub>• **system** (uri) - System of the unit (e.g., UCUM)</sub>\n`;
-        content += `<sub>• **code** (code) - Coded unit form</sub>\n`;
-        content += `\n</details>\n\n`;
-        break;
-        
-      case 'CodeableConcept':
-        content += `<details>\n<summary><sub>🏷️ **CodeableConcept Properties**</sub></summary>\n\n`;
-        content += `<sub>• **coding** (Coding[]) - Code defined by terminology system</sub>\n`;
-        content += `<sub>• **text** (string) - Plain text representation</sub>\n`;
-        content += `\n</details>\n\n`;
-        break;
-        
-      case 'Reference':
-        content += `<details>\n<summary><sub>🔗 **Reference Properties**</sub></summary>\n\n`;
-        content += `<sub>• **reference** (string) - Literal reference (e.g., "Patient/123")</sub>\n`;
-        content += `<sub>• **type** (uri) - Type the reference refers to</sub>\n`;
-        content += `<sub>• **identifier** (Identifier) - Logical reference</sub>\n`;
-        content += `<sub>• **display** (string) - Text alternative</sub>\n`;
-        content += `\n</details>\n\n`;
-        break;
-        
-      case 'Period':
-        content += `<details>\n<summary><sub>📅 **Period Properties**</sub></summary>\n\n`;
-        content += `<sub>• **start** (dateTime) - Starting time</sub>\n`;
-        content += `<sub>• **end** (dateTime) - End time (if ended)</sub>\n`;
-        content += `\n</details>\n\n`;
-        break;
-    }
-    
-    return content;
+    return typeInfoMap[typeName] || null;
   }
 }

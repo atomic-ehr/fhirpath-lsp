@@ -201,7 +201,7 @@ export class FHIRPathService {
       return result;
 
     } catch (error) {
-      this.logger.error('Analysis error:', error);
+      this.logger.error('Analysis error:', error as Error);
       return null;
     }
   }
@@ -222,7 +222,7 @@ export class FHIRPathService {
         try {
           inputType = this.modelProvider.getType(resourceType);
         } catch (error) {
-          this.logger.warn(`Failed to get type for ${resourceType}:`, error);
+          this.logger.warn(`Failed to get type for ${resourceType}:`, error as Error);
         }
       }
 
@@ -233,7 +233,7 @@ export class FHIRPathService {
       });
 
     } catch (error) {
-      this.logger.error('Context-aware analysis error:', error);
+      this.logger.error('Context-aware analysis error:', error as Error);
       return null;
     }
   }
@@ -252,7 +252,7 @@ export class FHIRPathService {
       
       return result;
     } catch (error) {
-      this.logger.error('Evaluation error:', error);
+      this.logger.error('Evaluation error:', error as Error);
       return [];
     }
   }
@@ -271,7 +271,7 @@ export class FHIRPathService {
       
       return null;
     } catch (error) {
-      this.logger.error('Type inference error:', error);
+      this.logger.error('Type inference error:', error as Error);
       return null;
     }
   }
@@ -367,7 +367,7 @@ export class FHIRPathService {
       }
       return [];
     } catch (error) {
-      this.logger.error('Failed to get resource types from model provider:', error);
+      this.logger.error('Failed to get resource types from model provider:', error as Error);
       return [];
     }
   }
@@ -386,7 +386,7 @@ export class FHIRPathService {
         return this.modelProvider.getElementNames(typeInfo);
       }
     } catch (error) {
-      this.logger.warn(`Failed to get properties for ${resourceType}:`, error);
+      this.logger.warn(`Failed to get properties for ${resourceType}:`, error as Error);
     }
 
     return [];
@@ -419,7 +419,7 @@ export class FHIRPathService {
               cardinality: (elementType as any)?.cardinality
             };
           } catch (error) {
-            this.logger.warn(`Failed to get element details for ${resourceType}.${name}:`, error);
+            this.logger.warn(`Failed to get element details for ${resourceType}.${name}:`, error as Error);
             return {
               name,
               type: 'unknown'
@@ -428,7 +428,7 @@ export class FHIRPathService {
         });
       }
     } catch (error) {
-      this.logger.warn(`Failed to get property details for ${resourceType}:`, error);
+      this.logger.warn(`Failed to get property details for ${resourceType}:`, error as Error);
     }
 
     return [];
@@ -546,7 +546,7 @@ export class FHIRPathService {
       }
     } catch (error) {
       // Background tasks shouldn't fail the main process
-      this.logger.warn('Background analysis failed:', error);
+      this.logger.warn('Background analysis failed:', error as Error);
     }
   }
 

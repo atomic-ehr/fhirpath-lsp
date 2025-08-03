@@ -1,0 +1,26 @@
+// Test file for enhanced autocomplete schema functionality
+// @context Patient
+
+// Basic property completions
+Patient.
+
+// Function completions with type hints
+Patient.where().
+
+// Choice type completions
+Patient.name.
+
+// Deep navigation completions
+Patient.identifier.
+
+// Postfix snippet test
+Patient.birthDate
+
+// Function template test
+Patient.where(
+
+// Smart suggestions test (should prioritize common elements)
+Patient.
+
+// Context-aware completions
+Patient.contact.
