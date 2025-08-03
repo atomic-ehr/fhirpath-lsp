@@ -277,7 +277,7 @@ export class CompletionProvider {
 
       return filteredCompletions;
     } catch (error) {
-      this.logger.error('Error providing completions', { error });
+      this.logger.error('Error providing completions', error as Error);
       return [];
     }
   }
@@ -950,7 +950,7 @@ export class CompletionProvider {
       );
 
       if (!navigation.isValid) {
-        this.logger.warn('Navigation failed', { errors: navigation.errors });
+        this.logger.warn('Navigation failed', undefined, { errors: navigation.errors });
         return [];
       }
 
@@ -1847,7 +1847,7 @@ export class CompletionProvider {
           sortText: `0_${prop}`
         }));
       } else {
-        this.logger.warn('Navigation failed for path', {
+        this.logger.warn('Navigation failed for path', undefined, {
           resourceType: navigationContext.resourceType,
           path: navigationContext.propertyPath,
           errors: navigationResult.errors
@@ -1855,7 +1855,7 @@ export class CompletionProvider {
         return [];
       }
     } catch (error) {
-      this.logger.error('ModelProvider navigation error', { error });
+      this.logger.error('ModelProvider navigation error', error as Error);
       return [];
     }
   }

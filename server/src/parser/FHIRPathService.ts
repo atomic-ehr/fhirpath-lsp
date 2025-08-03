@@ -162,7 +162,7 @@ export class FHIRPathService {
       this.modelProvider =  provider;
 
     } catch (error) {
-      this.logger.warn('Failed to initialize FHIR model provider', { error });
+      this.logger.warn('Failed to initialize FHIR model provider', error as Error);
       // Continue without model provider - basic analysis will still work
     }
   }

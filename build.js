@@ -21,7 +21,7 @@ async function build() {
     entryPoints: ['server/src/server.ts'],
     bundle: true,
     outfile: 'server/out/server.js',
-    external: ['vscode-languageserver', 'vscode-languageserver-textdocument', './services/BackgroundWorker'],
+    external: ['vscode-languageserver', 'vscode-languageserver-textdocument'],
     format: 'cjs',
     platform: 'node',
     target: 'node16',
@@ -33,16 +33,6 @@ async function build() {
     }
   };
 
-  const backgroundWorkerConfig = {
-    entryPoints: ['server/src/services/BackgroundWorker.ts'],
-    bundle: true,
-    outfile: 'server/out/services/BackgroundWorker.js',
-    format: 'cjs',
-    platform: 'node',
-    target: 'node16',
-    sourcemap: true,
-    minify: isProduction
-  };
 
   const clientConfig = {
     entryPoints: ['client/src/extension.ts'],
@@ -62,15 +52,11 @@ async function build() {
     // Create contexts for watch mode
     const sharedContext = await esbuild.context(sharedConfig);
     const serverContext = await esbuild.context(serverConfig);
-    const backgroundWorkerContext = await esbuild.context(backgroundWorkerConfig);
     const clientContext = await esbuild.context(clientConfig);
     
     // Initial builds
     console.log('Building shared types...');
     await sharedContext.rebuild();
-    
-    console.log('Building background worker...');
-    await backgroundWorkerContext.rebuild();
     
     console.log('Building server...');
     await serverContext.rebuild();
@@ -88,7 +74,6 @@ async function build() {
     await Promise.all([
       sharedContext.watch(),
       serverContext.watch(),
-      backgroundWorkerContext.watch(),
       clientContext.watch()
     ]);
     
@@ -101,9 +86,6 @@ async function build() {
     // One-time builds
     console.log('Building shared types...');
     await esbuild.build(sharedConfig);
-    
-    console.log('Building background worker...');
-    await esbuild.build(backgroundWorkerConfig);
     
     console.log('Building server...');
     await esbuild.build(serverConfig);
