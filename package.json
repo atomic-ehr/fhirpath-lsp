@@ -37,7 +37,8 @@
     "typecheck:shared": "cd shared && bun run typecheck",
     "clean": "rm -rf client/out server/out shared/out",
     "install:all": "bun install && cd client && bun install && cd ../server && bun install && cd ../shared && bun install",
-    "dev": "bun run build && (code-insiders --extensionDevelopmentPath=. --new-window 2>/dev/null || code --extensionDevelopmentPath=. --new-window)",
+    "dev": "bun run build && code --extensionDevelopmentPath=`pwd` --new-window",
+    "dev:insiders": "bun run build && code-insiders --extensionDevelopmentPath=`pwd` --new-window 2>/dev/null",
     "package": "cd client && bunx vsce package",
     "lint": "bunx eslint . --ext .js",
     "format": "bunx prettier --write ."

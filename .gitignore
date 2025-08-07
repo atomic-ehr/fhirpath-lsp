@@ -60,4 +60,5 @@ node_modules/
 # Task files
 # tasks.json
 # tasks/ 
-.fhirpath-lsp
+.fhirpath-lsp/
+.fhir-cache/
